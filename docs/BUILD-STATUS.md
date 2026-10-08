@@ -3,42 +3,97 @@
 Track record of the `Build OrangeFox recovery (mars)` workflow.
 Updated by hand after each run.
 
-## Run 1
+## Run 1 — RESULT: build failed, diagnosed and fixed
+
+Full run: <https://github.com/S0SL/twrp_mars/actions/runs/37761738123> (commit `3f65e53`)
+
+| step | outcome | duration |
+| --- | --- | --- |
+| 1 Set up job | ✅ | |
+| 2 Free up disk space | ✅ | ~3 min (had the slow `du`; removed afterwards) |
+| 3 Checkout device tree | ✅ | |
+| 4 Prepare build environment | ✅ | |
+| 5 Install build dependencies | ✅ | ~1 min |
+| 6 Restore caches | ✅ miss (first run) | |
+| 7 **Sync OrangeFox fox_14.1** | ✅ | **~19 min** (10:14 → 10:33) |
+| 8 Save prebuilts cache | ✅ | ~5 min |
+| 9 Save .repo cache | ✅ | ~5 min |
+| 10 Fetch prebuilt kernel Image | ✅ | |
+| 11 Install device tree | ✅ | |
+| 12 **Build recoveryimage** | ❌ | ~5 min |
+| 13–17 | skipped / log only | |
+
+### What worked
+
+* The corrected sync route is confirmed: `scripts/fox-sync.sh` →
+  `orangefox_sync.sh --branch 14.1` synced the whole tree, applied the
+  `build/make`, `system/vold`, `remove-minimal.xml` and `system/update_engine`
+  patches, cloned OrangeFox's recovery + vendor trees, `device/qcom/common`,
+  `device/qcom/twrp-common` and `external/se_omapi` — **in 19 minutes**, much
+  faster than the 30–60 min estimate.
+* No disk-space failure: the `ubuntu-22.04` runner was enough for the sync.
+* Both caches saved successfully (so run 2 starts warm).
+* `prebuilt/Image` was fetched from the kernel project's AnyKernel3 release and
+  passed the arm64-magic check.
+* The device tree installed into `device/xiaomi/mars` correctly.
+
+### Failure 1 — `set -u` broke AOSP's envsetup (the immediate cause of the failure)
+
+```
+build/envsetup.sh: line 21: TOP: unbound variable
+```
+
+`build/envsetup.sh` (and much of AOSP's shell code) dereferences unset
+variables. The build step used `set -euo pipefail`, so sourcing it aborted
+immediately — before `lunch`, before any compile. The build "failed" in 5
+minutes because it never started.
+
+**Fixed:** the build step now uses `set -eo pipefail` (no `-u`), tolerates
+`envsetup.sh`'s return value, and then explicitly verifies that `lunch` exists
+and that `lunch twrp_mars-eng` succeeds. `scripts/check-tree.sh` now has a
+regression guard that parses the option cluster (note: `"-u"` is *not* a
+substring of `"-euo"`, which is why the first version of the guard silently
+passed — both cases are now covered).
+
+### Failure 2 — upstream `orangefox_sync.sh` looks for the vendor/twrp patch in the wrong place
+
+```
+./orangefox_sync.sh: line 248: /tmp/tmp.../sync/patch-vendor-twrp-fox_14.1.diff: No such file or directory
+-- Error! Failed to patch the twrp-14 vendor/twrp !
+```
+
+`update_environment()` sets `PATCH_VENDOR_TWRP="$BASE_DIR/patch-vendor-twrp-$FOX_DEF_BRANCH.diff"`
+but the file ships in `$BASE_DIR/patches/`. `init_script()` only validates
+`$PATCH_FILE`, so this is a **silent** failure: the script prints the error and
+continues with `vendor/twrp` unpatched.
+
+That patch is not cosmetic — it adds
+
+```make
+include bootable/recovery/orangefox_soong.mk
+```
+
+to `vendor/twrp/config/BoardConfigSoong.mk`, i.e. it is what pulls OrangeFox's
+Soong configuration into the build, and it also registers the `tw_no_haptics`
+Soong variable that `TW_NO_HAPTICS := true` relies on.
+
+**Fixed:** `scripts/fox-sync.sh` now copies
+`patches/patch-vendor-twrp-fox_14.1.diff` to where the script looks for it
+before running it (upstream is not modified), and then *verifies* the result:
+it fails fast if `orangefox_soong.mk` is not included, or if
+`bootable/recovery/orangefox.mk`, `vendor/recovery/OrangeFox_A14.sh`,
+`vendor/twrp/config/common.mk`, `device/qcom/common`, `device/qcom/twrp-common`
+or `external/se_omapi` are missing.
+
+## Run 2
 
 | field | value |
 | --- | --- |
-| date (UTC) | 2026-10-08 |
-| run | <https://github.com/S0SL/twrp_mars/actions/runs/37761738123> |
-| commit | `3f65e53` (`main`) |
-| trigger | `workflow_dispatch` |
+| trigger | push of the run-1 fixes |
 | runner | `ubuntu-22.04` |
-| status | **in progress** at the time of writing |
-| artifacts | — |
-| notes | First run, cold cache. Expected duration 1.5–2.5 h (sync 30–60 min + build 30–60 min). No cache exists yet, so `Restore .repo cache` is a guaranteed miss. |
-
-### Run 1 — step log so far
-
-| step | outcome |
-| --- | --- |
-| 1 Set up job | ✅ |
-| 2 Free up disk space | ✅ (but see below — it was slow) |
-| 3 Checkout device tree | ✅ |
-| 4 Prepare build environment | ✅ |
-| 5 Install build dependencies | ✅ (apt + Google's `repo` launcher) |
-| 6 Restore prebuilts cache | ✅ miss (expected, first run) |
-| 7 Restore .repo cache | ✅ miss (expected, first run) |
-| 8 **Sync OrangeFox fox_14.1** | ▶️ running (30–60 min expected) |
-| 9–17 | pending |
-
-The fact that step 8 started at all is already a meaningful result: it proves the
-corrected sync route (`scripts/fox-sync.sh` → `orangefox_sync.sh --branch 14.1`)
-is accepted, and that the `repo init -b fox_14.1` in the original plan would
-have been the wrong call.
-
-**Fix applied after this observation:** the "Free up disk space" step originally
-ended with `du -xh --max-depth=1 /`, which walks the entire runner filesystem and
-took several minutes for no benefit. It was removed; `df -h` is enough. (This is
-why step 2 looked slow in run 1.)
+| caches | prebuilts **hit**, `.repo` **hit** |
+| expectation | sync 5–10 min (warm), build 30–60 min |
+| status | see the Actions tab |
 
 ### Aborted attempts before run 1
 

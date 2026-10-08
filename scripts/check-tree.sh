@@ -211,6 +211,50 @@ else
 	pass "$WF does not use the invalid repo init -b fox_14.1 (only in comments)"
 fi
 
+# Regression guards for the two failures seen in CI run 37761738123.
+# 1) `set -u` breaks AOSP's build/envsetup.sh ("TOP: unbound variable").
+#    Checked precisely against the run block of the step that sources it.
+#    NB: the option cluster must be parsed, not string-matched -- "-u" is NOT a
+#    substring of "-euo".
+if python3 - "$WF" <<'PY'
+import sys, re, yaml
+
+def enables_nounset(line):
+    if not line.startswith("set "):
+        return False
+    if re.search(r'(^|\s)-[a-zA-Z]*u[a-zA-Z]*(\s|$)', line):
+        return True
+    if re.search(r'(^|\s)-o\s+nounset(\s|$)', line):
+        return True
+    if re.search(r'(^|\s)--nounset(\s|$)', line):
+        return True
+    return False
+
+d = yaml.safe_load(open(sys.argv[1]))
+for s in d["jobs"]["build"]["steps"]:
+    run = s.get("run", "")
+    if "source build/envsetup.sh" not in run:
+        continue
+    for line in run.splitlines():
+        line = line.strip()
+        if line.startswith("source build/envsetup.sh"):
+            sys.exit(1)                    # reached the source line safely
+        if enables_nounset(line):
+            sys.exit(0)                    # BAD: nounset is in effect
+sys.exit(1)
+PY
+then
+	fail "$WF enables 'set -u' before sourcing build/envsetup.sh (breaks on \$TOP)"
+else
+	pass "workflow does not enable 'set -u' before build/envsetup.sh"
+fi
+# 2) the upstream vendor/twrp patch path bug must stay worked around.
+if grep -q 'patch-vendor-twrp' scripts/fox-sync.sh; then
+	pass "fox-sync.sh works around the vendor/twrp patch path bug"
+else
+	fail "fox-sync.sh no longer works around the upstream vendor/twrp patch path bug"
+fi
+
 # ---------------------------------------------------------------------------
 hdr "6. shell scripts"
 for f in scripts/*.sh vendorsetup.sh; do

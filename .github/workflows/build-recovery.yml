@@ -216,7 +216,11 @@ jobs:
       - name: Build recoveryimage (-> boot.img)
         id: build
         run: |
-          set -euo pipefail
+          # IMPORTANT: do NOT add `-u` (nounset) here.
+          # AOSP's build/envsetup.sh dereferences unset variables (TOP, ...) and
+          # aborts immediately with "TOP: unbound variable".  Run 1 failed
+          # exactly there.
+          set -eo pipefail
           FOX_DIR="${{ steps.env.outputs.fox_dir }}"
           cd "$FOX_DIR"
 
@@ -225,14 +229,24 @@ jobs:
           export FOX_BUILD_TYPE="${{ github.event.inputs.build_type || 'Unofficial' }}"
           export ALLOW_MISSING_DEPENDENCIES=true
 
-          source build/envsetup.sh
-          lunch twrp_mars-eng
+          # envsetup.sh is not written defensively (it dereferences unset vars
+          # and may return nonzero), so tolerate its return value and then verify
+          # that it actually did its job.
+          source build/envsetup.sh || echo "-- note: envsetup.sh returned $?"
+          type lunch >/dev/null 2>&1 || {
+            echo "ERROR: build/envsetup.sh did not define lunch()"; exit 1; }
+
+          lunch twrp_mars-eng || {
+            echo "ERROR: 'lunch twrp_mars-eng' failed."
+            echo "       Check that AndroidProducts.mk landed in device/xiaomi/mars."
+            exit 1; }
 
           echo "--- build vars ---"
           get_build_var TARGET_PRODUCT
           get_build_var TARGET_DEVICE
           get_build_var BOARD_USES_RECOVERY_AS_BOOT
-          get_build_var BOARD_USES_RECOVERY_AS_BOOT >/dev/null 2>&1 || true
+          get_build_var TARGET_PREBUILT_KERNEL
+          get_build_var TW_NO_HAPTICS || true
 
           # BOARD_USES_RECOVERY_AS_BOOT=true makes `recoveryimage` emit boot.img.
           mka recoveryimage 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
