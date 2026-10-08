@@ -1,0 +1,295 @@
+name: Build OrangeFox recovery (mars)
+
+# Builds the OrangeFox (fox_14.1) recovery for the Xiaomi Mi 11 Pro (mars) as a
+# flashable boot.img.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS WORKFLOW LOOKS LIKE THIS
+# ---------------------------------------------------------------------------
+# * `repo init -u https://gitlab.com/OrangeFox/sync.git -b fox_14.1` is NOT a
+#   valid command: OrangeFox/sync only has a `master` branch.  fox_14.1 is a
+#   legacy branch and must be set up with the official helper
+#   (./orangefox_sync.sh --branch 14.1), which repo-inits the TWRP minimal
+#   manifest, patches it, and clones OrangeFox's own recovery + vendor trees.
+#   -> scripts/fox-sync.sh implements exactly that.
+#
+# * mars has NO recovery partition and boots with boot header v3, so
+#   BOARD_USES_RECOVERY_AS_BOOT is used and the target is `boot.img`.
+#   OrangeFox_A14.sh is invoked from the "recovery-as-boot" hook
+#   (ORANGEFOX_CALLING_CARD=3.0) and therefore picks COMPILED_IMAGE_FILE=boot.img.
+#
+# * The first run is dominated by `repo sync` (a pruned-but-still-large Android
+#   14 tree): expect 30-60 minutes for the sync alone, plus 30-60 minutes for
+#   the build.  timeout-minutes is set accordingly.
+#
+# Trigger: workflow_dispatch (manual) or a push to main.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+    inputs:
+      fox_branch:
+        description: 'OrangeFox branch. Only 14.1 is supported by this device tree.'
+        required: true
+        default: '14.1'
+        type: choice
+        options:
+          - '14.1'
+      kernel_url:
+        description: 'AnyKernel3 zip (containing Image) or direct raw Image URL'
+        required: true
+        default: 'https://github.com/S0SL/android_kernel_xiaomi_sm8350/releases/download/boot-img-LOS23.2-20260930-bakasu/anykernel3-BakaSU-susfs-v2.3.0-mars.zip'
+      build_type:
+        description: 'FOX_BUILD_TYPE (Unofficial / Beta / Stable)'
+        required: true
+        default: 'Unofficial'
+      runner:
+        description: 'Runner label (switch to a larger runner if the sync runs out of disk)'
+        required: true
+        default: 'ubuntu-22.04'
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build OrangeFox boot.img for mars
+    runs-on: ${{ github.event.inputs.runner || 'ubuntu-22.04' }}
+    timeout-minutes: 350
+
+    steps:
+      # ---------------------------------------------------------------------
+      - name: Free up disk space
+        run: |
+          # A pruned Android 14 tree plus `out/` is a lot of disk.  GitHub's
+          # ubuntu-22.04 runner has ~50 GB free by default; this reclaims ~25 GB.
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL \
+                      /usr/local/share/boost \
+                      /usr/local/lib/node_modules \
+                      "$AGENT_TOOLSDIRECTORY" || true
+          sudo apt-get clean
+          df -h /
+          echo "--- biggest consumers ---"
+          du -xh --max-depth=1 / 2>/dev/null | sort -h | tail -12
+
+      # ---------------------------------------------------------------------
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ---------------------------------------------------------------------
+      - name: Prepare build environment
+        id: env
+        run: |
+          set -euo pipefail
+          FOX_DIR="$HOME/fox_14.1"
+          echo "fox_dir=$FOX_DIR" >> "$GITHUB_OUTPUT"
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "FOX_DIR=$FOX_DIR"
+          df -h / /home 2>/dev/null || df -h /
+
+      # ---------------------------------------------------------------------
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # Required by the AOSP/TWRP build, OrangeFox's scripts and repo.
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache cpio curl flex g++-multilib gcc-multilib \
+            git git-lfs gnupg gperf imagemagick lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libswitch-perl libxml2 libxml2-utils lzop \
+            openjdk-17-jdk-headless pngcrush rsync schedtool squashfs-tools \
+            unzip xsltproc zip zlib1g-dev zstd lz4 python3 python-is-python3 \
+            patchelf neofetch lsb-release
+          # `repo` from apt tends to be ancient: use Google's launcher.
+          mkdir -p "$HOME/bin"
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+          chmod a+x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          git config --global user.name  "twrp_mars CI"
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global color.ui false
+          git config --global trailer.changeid.key "Change-Id"
+          "$HOME/bin/repo" --version
+
+      # ---------------------------------------------------------------------
+      # Caches.  GitHub caps caches at 10 GB per repository, so the full
+      # .repo store usually does NOT fit: the save steps are best-effort
+      # (continue-on-error) and a miss only costs sync time, never a failure.
+      # ---------------------------------------------------------------------
+      - name: Restore prebuilts cache
+        id: prebuilts-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ steps.env.outputs.fox_dir }}/prebuilts
+          key: fox-14.1-prebuilts-${{ steps.env.outputs.week }}
+          restore-keys: |
+            fox-14.1-prebuilts-
+
+      - name: Restore .repo cache (best effort)
+        id: repo-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ steps.env.outputs.fox_dir }}/.repo/projects
+            ${{ steps.env.outputs.fox_dir }}/.repo/project-objects
+          key: fox-14.1-repo-${{ steps.env.outputs.week }}
+          restore-keys: |
+            fox-14.1-repo-
+
+      # ---------------------------------------------------------------------
+      - name: Sync OrangeFox fox_14.1
+        run: |
+          set -euo pipefail
+          export FOX_DIR="${{ steps.env.outputs.fox_dir }}"
+          ./scripts/fox-sync.sh "$FOX_DIR"
+          echo "--- manifest branch used ---"
+          git -C "$FOX_DIR/.repo/manifests" log -1 --format='%h %s' || true
+          df -h /
+
+      - name: Save prebuilts cache
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ steps.env.outputs.fox_dir }}/prebuilts
+          key: fox-14.1-prebuilts-${{ steps.env.outputs.week }}
+
+      - name: Save .repo cache (best effort, may exceed the 10 GB cache limit)
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ steps.env.outputs.fox_dir }}/.repo/projects
+            ${{ steps.env.outputs.fox_dir }}/.repo/project-objects
+          key: fox-14.1-repo-${{ steps.env.outputs.week }}
+
+      # ---------------------------------------------------------------------
+      - name: Fetch prebuilt kernel Image
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-kernel.sh \
+            "${{ github.event.inputs.kernel_url || 'https://github.com/S0SL/android_kernel_xiaomi_sm8350/releases/download/boot-img-LOS23.2-20260930-bakasu/anykernel3-BakaSU-susfs-v2.3.0-mars.zip' }}" \
+            prebuilt/Image
+
+      # ---------------------------------------------------------------------
+      - name: Install device tree into device/xiaomi/mars
+        run: |
+          set -euo pipefail
+          FOX_DIR="${{ steps.env.outputs.fox_dir }}"
+          DEST="$FOX_DIR/device/xiaomi/mars"
+          mkdir -p "$DEST"
+          # This repository IS the device tree (TWRP convention), so its root is
+          # copied to device/xiaomi/mars.  CI-only directories are skipped.
+          rsync -a \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'scripts/' \
+            --exclude 'docs/' \
+            --exclude 'dist/' \
+            ./ "$DEST/"
+          echo "--- device/xiaomi/mars ---"
+          find "$DEST" -type f | sort
+          echo
+          echo "--- prebuilt kernel ---"
+          ls -l "$DEST/prebuilt/Image"
+
+      # ---------------------------------------------------------------------
+      - name: Build recoveryimage (-> boot.img)
+        id: build
+        run: |
+          set -euo pipefail
+          FOX_DIR="${{ steps.env.outputs.fox_dir }}"
+          cd "$FOX_DIR"
+
+          export LC_ALL=C
+          export FOX_BUILD_DEVICE=mars
+          export FOX_BUILD_TYPE="${{ github.event.inputs.build_type || 'Unofficial' }}"
+          export ALLOW_MISSING_DEPENDENCIES=true
+
+          source build/envsetup.sh
+          lunch twrp_mars-eng
+
+          echo "--- build vars ---"
+          get_build_var TARGET_PRODUCT
+          get_build_var TARGET_DEVICE
+          get_build_var BOARD_USES_RECOVERY_AS_BOOT
+          get_build_var BOARD_USES_RECOVERY_AS_BOOT >/dev/null 2>&1 || true
+
+          # BOARD_USES_RECOVERY_AS_BOOT=true makes `recoveryimage` emit boot.img.
+          mka recoveryimage 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          echo "--- out/ ---"
+          ls -la out/target/product/mars/ | head -60
+          df -h /
+
+      # ---------------------------------------------------------------------
+      - name: Show build log tail on failure
+        if: failure()
+        run: |
+          echo "=== build.log tail (last 300 lines) ==="
+          tail -300 "$GITHUB_WORKSPACE/build.log" || true
+          echo
+          echo "=== free space ==="
+          df -h / || true
+
+      # ---------------------------------------------------------------------
+      - name: Collect artifacts
+        if: success()
+        run: |
+          set -euo pipefail
+          FOX_DIR="${{ steps.env.outputs.fox_dir }}"
+          OUT="$FOX_DIR/out/target/product/mars"
+          mkdir -p dist
+
+          find "$OUT" -maxdepth 1 -type f \
+            \( -name 'boot.img' -o -name 'recovery.img' -o -name 'vendor_boot.img' \
+               -o -name 'OrangeFox-*' -o -name 'dtbo.img' \) \
+            -exec cp -v {} dist/ \;
+
+          [ -n "$(ls -A dist)" ] || { echo "ERROR: nothing to upload"; exit 1; }
+
+          # Extra context for whoever flashes this.
+          {
+            echo "mars / twrp_mars-eng / fox_14.1"
+            echo "commit: $GITHUB_SHA"
+            echo "run:    $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "build type: ${{ github.event.inputs.build_type || 'Unofficial' }}"
+            echo "kernel:     ${{ github.event.inputs.kernel_url || 'default bootstrap release' }}"
+            echo
+            sha256sum dist/*
+          } > dist/BUILD-INFO.txt
+
+          ls -la dist/
+          cat dist/BUILD-INFO.txt
+
+      - name: Upload recovery images
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-mars-boot-${{ github.run_number }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      # ---------------------------------------------------------------------
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            build.log
+          if-no-files-found: warn
+          retention-days: 14

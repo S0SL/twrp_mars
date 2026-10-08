@@ -1,0 +1,12 @@
+# The prebuilt kernel Image is fetched at build time (~39 MB) -- never commit it.
+/prebuilt/Image
+/prebuilt/*.img
+
+# Build / packaging outputs
+/dist/
+/build.log
+/out/
+
+# Editor / OS noise
+*~
+.DS_Store

@@ -1,0 +1,62 @@
+#
+# Android fstab file -- Xiaomi Mi 11 Pro (mars), TARGET_RECOVERY_FSTAB
+#
+# SYnthesis of:
+#   * TeamWin/android_device_xiaomi_sm8350-common  (android-11)
+#       twrp/recovery/root/system/etc/recovery.fstab
+#   * kotah81/OrangeFox_device_xiaomi_sm8350-common (tiramisu)
+#       twrp/recovery/root/system/etc/recovery.fstab
+#   * LineageOS/android_device_xiaomi_sm8350-common (lineage-23.2)
+#       rootdir/etc/fstab.qcom
+#
+# The filesystem that contains the filesystem checker binary (typically /system)
+# cannot specify MF_CHECK, and must come before any filesystems that DO specify
+# MF_CHECK.
+#
+# <src>                    <mnt_point>  <type>  <mnt_flags and options>                <fs_mgr_flags>
+
+# ---------------------------------------------------------------------------
+# Dynamic (logical) partitions inside `super`
+#   slotselect  -- A/B
+#   avb         -- keep AVB on the logical partitions
+#   first_stage_mount
+# Both ext4 and erofs lines are listed: HyperOS 2 ships ext4, recent
+# LineageOS builds ship erofs.  fs_mgr picks whichever type matches.
+# ---------------------------------------------------------------------------
+system                     /system      ext4    ro,barrier=1,discard                   wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey
+system                     /system      erofs   ro                                     wait,slotselect,avb=vbmeta_system,logical,first_stage_mount,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey
+
+system_ext                 /system_ext  ext4    ro,barrier=1,discard                   wait,slotselect,avb=vbmeta_system,logical,first_stage_mount
+system_ext                 /system_ext  erofs   ro                                     wait,slotselect,avb=vbmeta_system,logical,first_stage_mount
+
+product                    /product     ext4    ro,barrier=1,discard                   wait,slotselect,avb=vbmeta_system,logical,first_stage_mount
+product                    /product     erofs   ro                                     wait,slotselect,avb=vbmeta_system,logical,first_stage_mount
+
+vendor                     /vendor      ext4    ro,barrier=1,discard                   wait,slotselect,avb,logical,first_stage_mount
+vendor                     /vendor      erofs   ro                                     wait,slotselect,avb,logical,first_stage_mount
+
+odm                        /odm         ext4    ro,barrier=1,discard                   wait,slotselect,avb,logical,first_stage_mount
+odm                        /odm         erofs   ro                                     wait,slotselect,avb,logical,first_stage_mount
+
+vendor_dlkm                /vendor_dlkm ext4    ro,barrier=1,discard                   wait,slotselect,logical,first_stage_mount
+vendor_dlkm                /vendor_dlkm erofs   ro                                     wait,slotselect,logical,first_stage_mount
+
+# ---------------------------------------------------------------------------
+# Physical partitions
+# ---------------------------------------------------------------------------
+/dev/block/bootdevice/by-name/metadata  /metadata  ext4  noatime,nosuid,nodev,discard  wait,check,formattable,wrappedkey,first_stage_mount
+/dev/block/bootdevice/by-name/persist   /persist   ext4  noatime,nosuid,nodev,barrier=1  wait
+/dev/block/bootdevice/by-name/misc      /misc      emmc  defaults                       defaults
+
+# ---------------------------------------------------------------------------
+# /data -- FBE (file based encryption)
+#
+# PHASE 1 NOTE: TW_INCLUDE_CRYPTO is OFF, so TWRP will *see* /data but cannot
+# decrypt it.  The full FBE metadata below is kept on purpose: it is the exact
+# baseline that phase 2 has to match.  See docs/PHASE2-CRYPTO.md.
+#
+# fileencryption        = AES-256-XTS / AES-256-CTS, v2, inlinecrypt, wrapped keys
+# metadata_encryption   = metadata (directory) encryption, wrapped keys
+# keydirectory          = /metadata/vold/metadata_encryption
+# ---------------------------------------------------------------------------
+/dev/block/bootdevice/by-name/userdata  /data      f2fs    noatime,nosuid,nodev,discard,inlinecrypt,reserve_root=32768,resgid=1065,fsync_mode=nobarrier  latemount,wait,check,formattable,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,keydirectory=/metadata/vold/metadata_encryption,metadata_encryption=aes-256-xts:wrappedkey_v0,quota,reservedsize=128M,sysfs_path=/sys/devices/platform/soc/1d84000.ufshc,checkpoint=fs

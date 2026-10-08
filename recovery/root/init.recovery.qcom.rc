@@ -1,0 +1,35 @@
+# Copyright (c) 2009-2012, 2014-2015, The Linux Foundation. All rights reserved.
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Recovery init for the Xiaomi Mi 11 Pro (mars).
+#
+# Base: TeamWin/android_device_xiaomi_sm8350-common (android-11)
+#         rootdir/etc/init.recovery.qcom.rc
+# Plus: LineageOS/android_device_xiaomi_sm8350-common (lineage-23.2)
+#         rootdir/etc/init.recovery.qcom.rc  -- the ADSP/firmware mount, which
+#         is required on lahaina so that the PMIC firmware can be loaded.
+#
+# The `on fs` block is what makes /dev/block/bootdevice/by-name/* resolve on
+# this platform (there is no static /dev/block/platform path before it).
+#
+
+on fs
+    wait /dev/block/platform/soc/${ro.boot.bootdevice}
+    symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+
+    # Load ADSP firmware for PMIC (needed on lahaina)
+    mkdir /firmware
+    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /firmware ro context=u:object_r:firmware_file:s0
+
+on init
+    setprop sys.usb.configfs 1
+
+on property:ro.boot.usbcontroller=*
+    setprop sys.usb.controller ${ro.boot.usbcontroller}
+    write /sys/class/udc/${ro.boot.usbcontroller}/device/../mode peripheral
+
+on property:dev.mnt.blk.firmware=*
+    write /sys/kernel/boot_adsp/boot 1
+
+on property:init.svc.fastbootd=running
+    umount /firmware
