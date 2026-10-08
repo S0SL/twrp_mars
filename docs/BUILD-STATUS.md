@@ -8,12 +8,30 @@ Updated by hand after each run.
 | field | value |
 | --- | --- |
 | date (UTC) | 2026-10-08 |
-| commit | *(see the run)* |
+| run | <https://github.com/S0SL/twrp_mars/actions/runs/37761738123> |
+| commit | `3f65e53` (`main`) |
 | trigger | `workflow_dispatch` |
 | runner | `ubuntu-22.04` |
-| status | see the repository's Actions tab |
+| status | **in progress** at the time of writing |
 | artifacts | — |
 | notes | First run, cold cache. Expected duration 1.5–2.5 h (sync 30–60 min + build 30–60 min). No cache exists yet, so `Restore .repo cache` is a guaranteed miss. |
+
+### Aborted attempts before run 1
+
+Two runs were started at 10:07 UTC and both ended `cancelled`, because a
+`workflow_dispatch` run and a `push` run share the concurrency group
+(`${{ github.workflow }}-${{ github.ref }}`) and `cancel-in-progress: true`
+made them kill each other. Cancelling the loser left neither running.
+
+Consequences, both applied:
+
+* `concurrency.cancel-in-progress` is now **`false`**: for a ~2 hour build it is
+  much better for a new push to queue behind the running build than to silently
+  destroy it. GitHub keeps only the newest pending run per group, so repeated
+  pushes do not pile up.
+* **Do not push while a build is running** unless you intend to queue another
+  one, and use `[skip ci]` in the commit message for documentation-only fixes
+  (`docs/**` and `**.md` are already in `paths-ignore`).
 
 ### What to look at if it fails
 

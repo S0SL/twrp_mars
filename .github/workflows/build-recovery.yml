@@ -55,8 +55,13 @@ on:
       - 'docs/**'
 
 concurrency:
+  # A full run takes 1.5-2.5 h.  Cancelling a run in flight to start a new one
+  # would throw that work away, so new runs QUEUE instead (GitHub keeps only the
+  # newest pending run per group).
+  # Reference: the first two attempts killed each other with
+  # cancel-in-progress: true -- see docs/BUILD-STATUS.md.
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
