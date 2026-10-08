@@ -37,7 +37,9 @@ TARGET_2ND_CPU_VARIANT_RUNTIME := kryo385
 
 TARGET_SUPPORTS_64_BIT_APPS := true
 TARGET_IS_64_BIT := true
-TARGET_USES_64_BIT_BINDER := true
+# TARGET_USES_64_BIT_BINDER is deliberately NOT set any more: this build system
+# deprecates it ("All devices use 64-bit binder by default now. Uses of
+# TARGET_USES_64_BIT_BINDER should be removed." -- CI run 6 log).
 
 # ---------------------------------------------------------------------------
 # Platform / bootloader
@@ -121,7 +123,14 @@ BOARD_FLASH_BLOCK_SIZE := 131072
 BOARD_HAS_LARGE_FILESYSTEM := true
 BOARD_ROOT_EXTRA_FOLDERS := bluetooth dsp firmware persist
 BOARD_SUPPRESS_SECURE_ERASE := true
-BOARD_BUILD_SYSTEM_ROOT_IMAGE := false
+# BOARD_BUILD_SYSTEM_ROOT_IMAGE must NOT be set: this build system declares it
+# obsolete (build/make/core/config.mk:174, `$(KATI_obsolete_var
+# BOARD_BUILD_SYSTEM_ROOT_IMAGE)`), and Kati turns *any* assignment of an
+# obsolete variable into a hard error.  It killed CI run 6 with
+#     device/xiaomi/mars/BoardConfig.mk:124: error: BOARD_BUILD_SYSTEM_ROOT_IMAGE is obsolete.
+# A system-as-root device needs nothing here in Android 14; the value was a
+# leftover from the 2021 TWRP tree.  scripts/check-tree.sh now fails if this or
+# any other obsolete variable reappears.
 
 # ---------------------------------------------------------------------------
 # Filesystems

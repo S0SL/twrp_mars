@@ -200,7 +200,7 @@ now prints the discovery list. If the list has no mars entry, the next fix is to
 make the tree visible to Soong (and `COMMON_LUNCH_CHOICES` would then also have
 raised "contains products(s) not defined in this file" — worth watching for).
 
-## Run 6 — in flight when the build container lost network
+## Run 6 — RESULT: failed at `lunch`; cause 6 found and fixed
 
 Run: <https://github.com/S0SL/twrp_mars/actions/runs/37773718753> (commit `dbe3283`)
 
@@ -209,36 +209,65 @@ Run: <https://github.com/S0SL/twrp_mars/actions/runs/37773718753> (commit `dbe32
 | 1–7 | ✅ |
 | 8 Sync OrangeFox fox_14.1 | ✅ |
 | 9 Save prebuilts cache | ✅ |
-| 10 Save .repo cache | ✅ (per the 12:12:51 poll) |
-| 11–13 | not observed: **this container lost all network access at ~12:17 UTC** (`curl https://api.github.com` → `000`, `example.com` → `000`), so the run could not be polled any further |
+| 10 Save .repo cache | ✅ |
+| 11 Fetch prebuilt kernel Image | ✅ |
+| 12 Install device tree into `device/xiaomi/mars` | ✅ |
+| 13 Build recoveryimage (→ boot.img) | ❌ after ~1 min |
+| 14–17 | log only / skipped |
 
-**Please check the run page directly.** The interesting output is at the
-`Build recoveryimage` step: it now prints, before attempting any lunch combo,
+Polling stopped at 12:17 UTC when this container lost outbound network access;
+the job log was retrieved after it came back (`completed failure`, 12:53).
 
-* the line count of `out/.module_paths/AndroidProducts.mk.list` and any
-  `xiaomi`/`mars` entry in it,
-* a listing of `device/xiaomi/mars/`,
-* the tail of every failed `lunch twrp_mars-<release>-eng` attempt,
+The verbose probe answered the open question, and the answer was neither of the
+two candidates: it is **not** a release-token problem and **not** a
+product-discovery problem. `ap2a` — the only release this manifest defines —
+got all the way into the product config and failed there:
 
-with `ap2a` tried first. That answers the one open question: whether
-`** Don't have a product spec for: 'twrp_mars'` was merely fallout from the wrong
-release token, or whether the device tree is not being discovered at all.
+```
+-- not a valid combo here: twrp_mars-ap2a-eng
+     | In file included from build/make/core/envsetup.mk:386:
+     | In file included from build/make/core/board_config.mk:241:
+     | device/xiaomi/mars/BoardConfig.mk:124: error: BOARD_BUILD_SYSTEM_ROOT_IMAGE is obsolete.
+     | 12:19:48 dumpvars failed with: exit status 1
+     | Device mars not found. Attempting to retrieve device repository from TeamWin Github ...
+     | ** Don't have a product spec for: 'twrp_mars'
+```
 
-### If the product is confirmed missing
+So `** Don't have a product spec` was fallout, not the cause: `dumpvars` died
+first, `check_product` therefore reported the device as missing (which is what
+sends `lunch` off to `roomservice.py` and its TeamWin GitHub lookup), and
+`build_build_var_cache` then failed for the same reason. The AndroidProducts
+diagnostic printed "does not exist" simply because Soong never got far enough to
+write `out/.module_paths/AndroidProducts.mk.list`.
 
-Then `core/product_config.mk` is not reading this tree, because
-`android_products_makefiles` only contains
-`$(file <$(OUT_DIR)/.module_paths/AndroidProducts.mk.list)` — a list produced by
-Soong's finder. Next things to try, in order:
+### Cause 6 — an obsolete board variable is a hard error in this build system
 
-1. run `mka` once with `--dumpvars-mode` / check whether the finder prunes
-   `device/` in this manifest;
-2. compare against a device tree known to build on fox_14.1
-   (`OrangeFox/device/mondrian` on fox_16.0, or any fox_14.1 tree) to see whether
-   something else registers the product;
-3. as a fallback, set `TARGET_PRODUCT`/`TARGET_RELEASE`/`TARGET_BUILD_VARIANT`
-   explicitly instead of relying on `lunch` — but `lunch` is the documented
-   interface, so this is a workaround, not a fix.
+`build/make/core/config.mk:174` contains
+
+```make
+$(KATI_obsolete_var BOARD_BUILD_SYSTEM_ROOT_IMAGE)
+```
+
+and Kati turns *any* assignment of a variable declared that way into a hard
+error. `BoardConfig.mk:124` still carried
+`BOARD_BUILD_SYSTEM_ROOT_IMAGE := false` — a leftover from the 2021 TeamWin
+tree; Android 14 system-as-root needs nothing there.
+
+**Fixed** by deleting the line (and the deprecated
+`TARGET_USES_64_BIT_BINDER := true`, which the same log flagged).
+
+To avoid spending another run on the same class of error, the complete obsolete
+list was extracted from the fork's `build/make`
+(`core/*.mk`, every `$(KATI_obsolete_var ...)` including its multi-line forms) and
+cross-checked against every `*.mk` in this tree: **148 names, exactly one of them
+set — the one above**. That list is now `scripts/obsolete-build-vars.txt`, and
+`scripts/check-tree.sh` fails if any of them reappears (negative-tested: putting
+the line back makes the checker fail).
+
+**The "product discovery" question is closed:** the tree *is* discovered — the
+run printed `device/xiaomi/mars/AndroidProducts.mk` in the listing and
+`dumpvars` failed on the board variable, not on the product. No
+`TARGET_PRODUCT`-env workaround is needed.
 
 
 ## Offline work while runs 6/7 could not be polled (12:17 UTC onwards)

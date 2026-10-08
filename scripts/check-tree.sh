@@ -65,6 +65,7 @@ REQUIRED=(
 	docs/kernel-prep/0001-mars-touch-modules.patch
 	scripts/publish-release.sh
 	scripts/fetch-modules.sh
+	scripts/obsolete-build-vars.txt
 )
 for f in "${REQUIRED[@]}"; do
 	[ -f "$f" ] && pass "$f" || fail "$f is missing"
@@ -192,6 +193,39 @@ if [ -z "$BADCHOICE" ] && grep -q 'twrp_mars-[a-z0-9_]*-eng' AndroidProducts.mk;
 	pass "lunch choices are 3-part (product-release-variant)"
 else
 	fail "non 3-part lunch choice(s):$BADCHOICE -- fox_14.1 lunch() rejects them"
+fi
+
+# Regression guard for CI run 6 (commit dbe3283):
+#   device/xiaomi/mars/BoardConfig.mk:124: error: BOARD_BUILD_SYSTEM_ROOT_IMAGE is obsolete.
+# Kati turns ANY assignment of a variable declared with `$(KATI_obsolete_var
+# ...)` into a hard error, so `lunch` dies while dumping the product config,
+# long before a missing product/module could be diagnosed.  The list lives in
+# scripts/obsolete-build-vars.txt, extracted from the build/make fork fox_14.1
+# uses; its header says how to regenerate it.
+OBSOLETE_FILE=scripts/obsolete-build-vars.txt
+MK_FILES="BoardConfig.mk device.mk twrp_mars.mk fox_mars.mk AndroidProducts.mk Android.mk"
+if [ -f "$OBSOLETE_FILE" ]; then
+	BADVARS=""
+	while IFS= read -r var; do
+		case "$var" in ''|'#'*) continue ;; esac
+		if grep -qE "^[[:space:]]*(export[[:space:]]+)?${var}[[:space:]]*[:+?]?=" $MK_FILES 2>/dev/null; then
+			BADVARS="$BADVARS $var"
+		fi
+	done <"$OBSOLETE_FILE"
+	N_OBS=$(grep -cv '^#' "$OBSOLETE_FILE")
+	if [ -n "$BADVARS" ]; then
+		fail "obsolete build variable(s) set:$BADVARS -- Kati makes these a hard error"
+	else
+		pass "none of the $N_OBS obsolete build variables are set"
+	fi
+else
+	fail "$OBSOLETE_FILE is missing"
+fi
+# Same class, warning only: deprecated, not an error.
+if grep -qE "^[[:space:]]*TARGET_USES_64_BIT_BINDER[[:space:]]*[:+?]?=" $MK_FILES 2>/dev/null; then
+	warn "TARGET_USES_64_BIT_BINDER is deprecated in this build system (remove it)"
+else
+	pass "TARGET_USES_64_BIT_BINDER not set (deprecated)"
 fi
 grep -q 'TARGET_PREBUILT_KERNEL' BoardConfig.mk \
 	&& pass "BoardConfig.mk uses TARGET_PREBUILT_KERNEL" \
