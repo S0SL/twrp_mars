@@ -110,15 +110,31 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          # Required by the AOSP/TWRP build, OrangeFox's scripts and repo.
+
+          # ---- tier 1: essentials, must succeed ---------------------------
           sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache cpio curl flex g++-multilib gcc-multilib \
-            git git-lfs gnupg gperf imagemagick lib32readline-dev lib32z1-dev \
-            libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
-            libssl-dev libswitch-perl libxml2 libxml2-utils lzop \
-            openjdk-17-jdk-headless pngcrush rsync schedtool squashfs-tools \
-            unzip xsltproc zip zlib1g-dev zstd lz4 python3 python-is-python3 \
-            patchelf neofetch lsb-release
+            bc bison build-essential ccache cpio curl flex git git-lfs gnupg \
+            gperf imagemagick libelf-dev libssl-dev libxml2 libxml2-utils lzop \
+            pngcrush rsync schedtool squashfs-tools unzip xsltproc zip \
+            zlib1g-dev zstd lz4 python3 patchelf neofetch lsb-release
+
+          # ---- tier 2: 32-bit multilib, needs the i386 architecture -------
+          # Several of these only exist once i386 is enabled, and none is
+          # critical for a recovery-only build, so the whole tier is best
+          # effort.  (In run 2 the single flat apt line stalled here for 10+
+          # minutes.)
+          sudo dpkg --add-architecture i386 || true
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends \
+            gcc-multilib g++-multilib libc6-dev-i386 lib32z1-dev \
+            lib32readline-dev lib32ncurses5-dev libncurses5 libncurses5-dev \
+            || echo "-- warning: some 32-bit development packages are unavailable"
+
+          # ---- tier 3: JDK, AOSP 14 wants 17 ------------------------------
+          sudo apt-get install -y --no-install-recommends openjdk-17-jdk-headless \
+            || sudo apt-get install -y --no-install-recommends default-jdk-headless
+
+          # ---- repo ------------------------------------------------------
           # `repo` from apt tends to be ancient: use Google's launcher.
           mkdir -p "$HOME/bin"
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
@@ -130,6 +146,14 @@ jobs:
           git config --global color.ui false
           git config --global trailer.changeid.key "Change-Id"
           "$HOME/bin/repo" --version
+
+          # Report what we ended up with; a missing optional package is fine.
+          echo "--- java ---"; java -version 2>&1 | head -2 || true
+          echo "--- tools ---"
+          for t in repo git curl zip unzip rsync ccache lz4 zstd python3; do
+            printf '  %-8s %s\n' "$t" "$(command -v "$t" || echo MISSING)"
+          done
+          df -h /
 
       # ---------------------------------------------------------------------
       # Caches.  GitHub caps caches at 10 GB per repository, so the full
