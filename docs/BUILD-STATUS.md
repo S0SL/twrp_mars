@@ -326,3 +326,140 @@ in [BUILD-ON-SERVER.md](BUILD-ON-SERVER.md).
 
 After this run no further GitHub builds were started; the primary path is
 `scripts/build-local.sh` on the user's server.
+
+## Server build 1 (the user's own server) — RESULT: IN PROGRESS, blocked on server access
+
+First run of the documented server path (`scripts/build-local.sh` on the user's
+Ubuntu machine) instead of a GitHub runner. **Nothing was flashed, no kernel
+repository was touched, and no cloud build was triggered.**
+
+### Environment measured
+
+| item | value |
+| --- | --- |
+| OS / kernel | Ubuntu 22.04.5 LTS, `6.8.0-40-generic`, x86_64 |
+| CPU / RAM | 4 cores / 15 GB RAM (~14.2 GB available) + 2 GB swap |
+| disk | `/dev/sda3` 294 GB with **268 GB free** at the start; `/home` is on `/` |
+| network | reached over IPv6 through a relay (`lkv6.shen-hub.top:35671`) |
+| hostname | `shen-Standard-PC-Q35-ICH9-2009` |
+
+Directory layout used on the server (all work stayed inside these):
+
+| path | what |
+| --- | --- |
+| `~/twrp-mars` | device tree working copy, `git clone https://github.com/S0SL/twrp_mars.git`, HEAD `2a9c092` — verified identical to the local copy |
+| `~/fox_14.1` | the AOSP/OrangeFox build tree (`scripts/fox-sync.sh` target) |
+| `~/bin/repo` | Google's `repo` launcher 2.65 (the apt one is too old) |
+| `~/logs/` | `build.log`, `resource.log` (30 s RAM/disk sampler), plus per-attempt logs |
+
+`scripts/check-tree.sh` passes on the server copy (`ALL CHECKS PASSED`).
+
+### Phase timings (measured, UTC)
+
+| phase | elapsed | notes |
+| --- | --- | --- |
+| apt dependencies (3 tiers) | **9 m 33 s** | tier 1 base 7 m 00 s, tier 2 i386 multilib 2 m 33 s, tier 3 repo launcher ~1 s. Splitting the tiers is what keeps this fast — see the table row in BUILD-ON-SERVER.md |
+| preflight + ccache | 3 s | |
+| `repo sync` attempt 1 | 82 m (killed) | reached 36 GB, then the international path stalled for 15 min (S1) |
+| `repo sync` attempt 2 | 64 m | reached 79 GB, then failed on two projects (S2) |
+| sync repair / re-verification | in progress | |
+| `mka recoveryimage` | not reached | |
+
+Disk peaked at **120 GB used** during the failed attempts, of which **54 GB was
+failed-fetch `tmp_pack_*` garbage** that was reclaimed (72 GB used afterwards).
+Lowest `MemAvailable` observed ≈ 13 GB; load peaked ≈ 10 on 4 cores; **no OOM kill
+was observed in the logs**. `--jobs 4` was used throughout.
+
+### Failure S1 — the international path died for ~15 minutes
+
+At ~16:44 UTC every connection to `github.com`, `android.googlesource.com` and
+`1.1.1.1` completed the TCP handshake but transferred **0 bytes**, while
+`raw.githubusercontent.com`, `gitlab.com` and all domestic mirrors stayed usable.
+It recovered by itself at ~17:04. `git fetch` has no transfer timeout, so the hung
+fetches had to be killed by hand; no progress was lost (`repo sync` resumes).
+
+Two mitigations, both kept:
+
+* `http.lowSpeedLimit=200` + `http.lowSpeedTime=900` so a stalled transfer aborts
+  instead of hanging forever;
+* the AOSP bulk is fetched from the Tsinghua mirror —
+  `git config --global url."https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/".insteadOf "https://android.googlesource.com/"`.
+  This only changes where the bytes come from; git verifies object SHAs, so the
+  revision is identical. Measured **39 MB/s vs ~1 MB/s** (~20×). GitHub and GitLab
+  stay on their origin hosts.
+
+### Failure S2 — `repo` silently drops `--depth=1`, turning a 1 GB fetch into a 20 GB one
+
+The real reason the sync kept dying:
+
+```
+error: Unable to fully sync the tree
+error: Downloading network changes failed.
+GitCommandError: 'fetch ... tag android-14.0.0_r67 ...' on platform/prebuilts/clang/host/linux-x86 failed
+stdout: error: RPC failed; curl 56 GnuTLS recv error (-9): Error decoding the received TLS packet.
+GitCommandError: ... on platform/prebuilts/rust failed
+```
+
+`~/fox_14.1/.repo/repo/project.py:1886`:
+
+```python
+if depth and not is_new and not self._HasShallow():
+    depth = None          # existing project -> --depth is dropped -> FULL history
+```
+
+`repo init --depth=1` does write `repo.depth = 1`, but repo applies it **only to
+projects it considers new**. As soon as a project directory exists from a failed
+attempt, every later fetch pulls the complete history: `prebuilts/rust`
+accumulated a **10.2 GB** single pack and `clang/host/linux-x86` **9.4 GB**, and
+both directories held *only* failed `tmp_pack_*` files — no usable pack, no refs,
+so every retry restarted from zero. That this was tree-wide is confirmed by
+**zero `shallow` files** anywhere under `.repo/project-objects`.
+
+**Fix (verified):** delete the failed project directory
+(`rm -rf ~/fox_14.1/.repo/project-objects/<name>.git`) so repo treats it as new —
+the fetch command then literally becomes `git fetch --depth=1 ...`. Runbook for a
+retry: `scripts/`-adjacent helper `fix-giants.sh` in the operator's `~/`, which
+repairs those projects and then re-verifies the whole tree.
+
+### Failure S3 — self-inflicted: the low-speed guard fired while the mirror was still packing
+
+```
+curl 28 Operation too slow. Less than 1000 bytes/sec transferred the last 60 seconds
+```
+
+The first version of the stall guard (`lowSpeedTime=60`) killed large fetches
+*before they started*: when a big pack is requested, the mirror spends minutes
+generating it server-side and sends nothing meanwhile. Relaxed to
+`lowSpeedLimit=200` / `lowSpeedTime=900`.
+
+### Then the server became unreachable (open blocker)
+
+From 19:38 UTC the SSH endpoint stopped working, and the failure mode is
+diagnostic:
+
+| probe | result |
+| --- | --- |
+| ports 22 / 35670 / 35672 / 35673 / 8080 / 443 | `Connection refused` |
+| port **35671** | TCP connect succeeds (0.04 s), **no bytes are ever sent**, and the peer closes cleanly after **~3.4 s** |
+| 8 passive banner reads (30 s each) | 8/8 zero bytes |
+
+An sshd sends its `SSH-2.0-...` banner immediately on accept, and that banner is a
+few dozen bytes — independent of bandwidth and MTU. A silent accept followed by a
+clean close is the signature of a **relay/tunnel endpoint whose backend has gone
+away** (`lkv6.shen-hub.top` is a tunnelled name). The machine behind it lost its
+tunnel — most likely because its outbound connection dropped, or because the
+resource-heavy full-history fetches that S2 describes caused memory pressure and
+the tunnel client (possibly sshd too) was killed.
+
+The machine has to be reached by the operator: restart the tunnel client, verify
+the host itself still has network (a static-IP change to `192.168.101.209/24` was
+made on it shortly before, so an address conflict is worth ruling out), or reboot
+it. Nothing in this repository can fix that, and no further cloud run was started.
+
+### Hardware note for the next run
+
+Because `repo init --depth=1` is not honoured for pre-existing projects, a
+from-scratch sync of this manifest downloads **full history** and peaks around
+120 GB *before* `out/`. Budget 200 GB+, and whenever a project fails, delete its
+`.repo/project-objects/<name>.git` directory so the retry is shallow rather than
+another full-history transfer.
