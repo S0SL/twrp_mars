@@ -284,3 +284,45 @@ changes what CI builds until the kernel-side release exists.
 | Kernel change prepared, dry-run verified, **not pushed** | `docs/kernel-prep/`: `git apply --check` passes; applying it and running the config merge gives a full `.config` diff of exactly the two touch symbols; the kernel checkout was then reverted byte-clean |
 | Recovery-side fetch prepared, unused | `scripts/fetch-modules.sh` (verifies the three modules and the `vermagic` against `prebuilt/Image`, stages into `recovery/root/lib/modules`, refuses to write either load list) |
 | Artifact publication prepared | `scripts/publish-release.sh` (resolves the 302 to a signed URL before fetching, so the token never goes to `objects.githubusercontent.com`) |
+
+## GitHub run 9 (`37780545560`, commit `e003562`) — RESULT: killed by the runner 15 s into the build
+
+This is the 7th build attempt and **the first one whose `lunch` succeeded**.
+
+| step | outcome |
+| --- | --- |
+| 1–12 | ✅ (sync ~19 min with warm caches, caches saved, kernel + device tree installed) |
+| 13 Build recoveryimage | ❌ **after 15 seconds, killed from outside** |
+| 14–17, post steps | skipped — the runner was gone, so even `if: always()` log upload never ran |
+
+The build step's own output:
+
+```
+-- lunching: twrp_mars-ap2a-eng              <- product config is now VALID
+[  0% ... ] ... [ 99% 1161/1162] cp /home/runner/fox_14.1/out/host/linux-x86/bin/soong_build
+##[error]The runner has received a shutdown signal. This can happen when the
+          runner service is stopped, or a manually started runner is canceled.
+##[error]Process completed with exit code 143.
+```
+
+`mka recoveryimage` started at **13:22:04Z** and the shutdown arrived at
+**13:22:19Z**; exit code 143 is `128+15` (SIGTERM). It died during Soong's own
+host-tool bootstrap, i.e. **before a single Android target was compiled**, so
+this run carries no information about the device tree at all.
+
+Two things worth recording:
+
+* **The obsolete-variable fix is confirmed.** `-- lunching: twrp_mars-ap2a-eng`
+  is the line this project has been trying to reach for six rounds: the product
+  spec resolves, `dumpvars` succeeds, and `mka` runs.
+* **No device-tree action follows from this.** It is an environment failure —
+  the runner was reclaimed/stopped mid-job — not a build error. Per the decision
+  to move to the user's own server, nothing was changed in response, no new
+  cloud run was triggered, and the cloud workflow is now only a fallback.
+
+Disk at the moment the build started: 146 GB total, **118 GB used / 28 GB free**
+(the same reading as run 8), which is the number behind the server sizing advice
+in [BUILD-ON-SERVER.md](BUILD-ON-SERVER.md).
+
+After this run no further GitHub builds were started; the primary path is
+`scripts/build-local.sh` on the user's server.
