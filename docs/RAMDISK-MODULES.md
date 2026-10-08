@@ -62,9 +62,13 @@ std::string GetModuleLoadList(bool recovery, const std::string& dir_path) {
 So during a recovery boot, first-stage init looks in **`/lib/modules`** and
 prefers **`modules.load.recovery`** when that file exists (it iterates
 version-matching sub-directories such as `/lib/modules/5.4` first, then falls
-back to the flat `/lib/modules`). This is what the
-`BOARD_*_RECOVERY_KERNEL_MODULES_LOAD` variables exist for, and it is the path
-that gets the display/touch modules loaded before the recovery binary starts.
+back to the flat `/lib/modules`). This is the path that gets the display/touch
+modules loaded *before* the recovery binary starts — and it is why the file
+name matters: §3 shows which build variable generates which load-list file
+(`BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD` → `lib/modules/modules.load`, and
+`modules.load.recovery` in the same directory from the module set itself — the
+similarly named `BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD` targets the
+*vendor* ramdisk, which this device tree never builds).
 
 **⚠ This path is strict — a bad entry is fatal.** `Modprobe::LoadListedModules`
 returns `false` if any listed module cannot be loaded

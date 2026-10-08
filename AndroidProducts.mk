@@ -28,15 +28,17 @@
 # (fox_14.1) still advertises the 2-part `twrp_vayu-eng` -- that entry is stale
 # and does not work on this build system.
 #
-# `bp2a` is the Android 14 QPR3 release token used by this manifest (the sync
-# script pins android14-qpr3-release for the projects it has to re-clone).
+# `ap2a` is the release token this manifest actually defines.  CI run 5 proved
+# it definitively:
+#     release_config.mk:145: error: No release config found for
+#     TARGET_RELEASE: bp2a. Available releases are: ap2a.
 # If a future manifest renames it, `.github/workflows/build-recovery.yml`
-# probes a short candidate list before giving up.
+# probes ap2a / ap3a / bp2a / udc / trunk_staging before giving up.
 # ---------------------------------------------------------------------------
 
 PRODUCT_MAKEFILES := \
     $(LOCAL_DIR)/twrp_mars.mk
 
 COMMON_LUNCH_CHOICES := \
-    twrp_mars-bp2a-eng \
-    twrp_mars-bp2a-userdebug
+    twrp_mars-ap2a-eng \
+    twrp_mars-ap2a-userdebug

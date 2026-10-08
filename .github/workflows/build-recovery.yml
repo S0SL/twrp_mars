@@ -264,24 +264,44 @@ jobs:
           # TWRP-patched AOSP 14 lunch() rejects a 2-part combo outright:
           #     Invalid lunch combo: twrp_mars-eng
           #     Valid combos must be of the form <product>-<release>-<variant>
-          # (run 4 failed exactly there).  `bp2a` is this manifest's Android 14
-          # QPR3 release token; probe a few candidates in case that changes.
+          # (run 4 failed exactly there), and run 5 added the release token:
+          #     release_config.mk:145: error: No release config found for
+          #     TARGET_RELEASE: bp2a. Available releases are: ap2a.
+          # So `ap2a` (Android 14 QPR2) is the one this manifest defines.
+          #
+          # Diagnostics first: if the product itself is not registered, every
+          # combo fails and the reason is hidden inside make.  Show Soong's
+          # AndroidProducts.mk list so a missing device tree is obvious.
+          echo "--- Soong's AndroidProducts.mk list ---"
+          APLIST="out/.module_paths/AndroidProducts.mk.list"
+          if [ -f "$APLIST" ]; then
+            wc -l < "$APLIST"
+            grep -i "xiaomi\|mars" "$APLIST" || echo "  (no xiaomi/mars entry!)"
+          else
+            echo "  $APLIST does not exist"
+          fi
+          echo "--- device/xiaomi/mars ---"
+          ls device/xiaomi/mars/ | head
+
           LUNCH_OK=0
-          for REL in bp2a ap2a ap3a udc trunk_staging; do
+          for REL in ap2a ap3a bp2a udc trunk_staging; do
             CAND="twrp_mars-$REL-eng"
-            if lunch "$CAND" >/dev/null 2>&1; then
+            # Capture output so a failure can actually be read; run 5 swallowed
+            # this and left the real error unknown.
+            if lunch "$CAND" >/tmp/lunch-$REL.log 2>&1; then
               echo "-- lunching: $CAND"
               lunch "$CAND" || { echo "ERROR: lunch $CAND failed"; exit 1; }
               LUNCH_OK=1
               break
             fi
             echo "-- not a valid combo here: $CAND"
+            sed 's/^/     | /' /tmp/lunch-$REL.log | tail -25
           done
           if [ "$LUNCH_OK" != 1 ]; then
             echo "ERROR: no valid <product>-<release>-<variant> combo for twrp_mars."
-            echo "       Valid release tokens are whatever this manifest defines;"
-            echo "       check COMMON_LUNCH_CHOICES and AndroidProducts.mk."
-            lunch twrp_mars-bp2a-eng || true      # show the real error
+            echo "       If every attempt failed with 'Don't have a product spec',"
+            echo "       the device tree is not being discovered at all -- check the"
+            echo "       AndroidProducts.mk list printed above."
             exit 1
           fi
 

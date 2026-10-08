@@ -24,7 +24,7 @@ Reference sources cloned during the synthesis:
 | `device.mk` | **newly written** | `TARGET_RECOVERY_DEVICE_MODULES` / `RECOVERY_LIBRARY_SOURCE_FILES` / `TW_LOAD_VENDOR_MODULES` from FOX-KOTAH-C; touch-firmware copy from FOX-KOTAH; crypto block from TW-common/FOX-KOTAH-C but commented out for phase 1. |
 | `twrp_mars.mk` | **newly written**, structure from **FOX-VAYU** `twrp_vayu.mk` | `PRODUCT_NAME := twrp_mars`, inherits `base.mk` + `core_64_bit.mk` + `vendor/twrp/config/common.mk` + `device.mk` + `fox_mars.mk`. |
 | `fox_mars.mk` | **newly written**, option set from **FOX-VAYU** `fox_vayu.mk` | Screen geometry adjusted to mars' 1440×3200. |
-| `AndroidProducts.mk` | **newly written**, format from **FOX-VAYU** + **FOX-KOTAH** | `COMMON_LUNCH_CHOICES := twrp_mars-bp2a-eng twrp_mars-bp2a-userdebug` — three parts, see U11. |
+| `AndroidProducts.mk` | **newly written**, format from **FOX-VAYU** + **FOX-KOTAH** | `COMMON_LUNCH_CHOICES := twrp_mars-ap2a-eng twrp_mars-ap2a-userdebug` — three parts, see U11. |
 | `Android.mk` | **TW** (trimmed) | The 2021 tree used `all-subdir-makefiles`; removed so that `scripts/` and `docs/` are never parsed. |
 | `vendorsetup.sh` | **FOX-KOTAH** (adapted) | Same `fox_get_target_device` shape as FOX-VAYU, `FDEVICE=mars`, 1440×3200-aware. |
 | `board-info.txt` | **newly written** | `require board=mars`. |

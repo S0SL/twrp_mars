@@ -136,9 +136,9 @@ bug: the ticket's suggested target (and OrangeFox's own `twrp_vayu-eng` in
 `OrangeFox/device/vayu` fox_14.1, and even the test build inside
 `orangefox_sync.sh`) is wrong for this build system.
 
-**Fixed.** The target is now the three-part `twrp_mars-bp2a-eng`:
+**Fixed.** The target is now the three-part `twrp_mars-ap2a-eng`:
 
-* `AndroidProducts.mk` declares `twrp_mars-bp2a-eng` / `twrp_mars-bp2a-userdebug`.
+* `AndroidProducts.mk` declares `twrp_mars-ap2a-eng` / `twrp_mars-ap2a-userdebug`.
 * The CI probes `bp2a ap2a ap3a udc trunk_staging` and lunches the first combo
   that works, so a release-token rename does not need a code change.
 * `scripts/check-tree.sh` fails if any declared choice is not three-part.
@@ -147,13 +147,66 @@ bug: the ticket's suggested target (and OrangeFox's own `twrp_vayu-eng` in
 own fox_16.0 README documents `lunch twrp_mondrian-bp2a-eng`, and the sync
 script pins `android14-qpr3-release`.
 
-## Run 5
+## Run 5 — RESULT: failed, two more causes found
+
+Run: <https://github.com/S0SL/twrp_mars/actions/runs/37769569262> (commit `b376e67`)
+
+Steps 1–12 all passed again (sync ~19 min, caches saved). The build step failed
+in ~30 s.
+
+```
+-- not a valid combo here: twrp_mars-bp2a-eng
+-- not a valid combo here: twrp_mars-ap2a-eng
+-- not a valid combo here: twrp_mars-ap3a-eng
+-- not a valid combo here: twrp_mars-udc-eng
+-- not a valid combo here: twrp_mars-trunk_staging-eng
+ERROR: no valid <product>-<release>-<variant> combo for twrp_mars.
+build/make/core/release_config.mk:145: error: No release config found for
+    TARGET_RELEASE: bp2a. Available releases are: ap2a.
+** Don't have a product spec for: 'twrp_mars'
+```
+
+### Cause 4 — the release token is `ap2a`, not `bp2a`
+
+The error message names it outright. Release names come from
+`release_config_map.mk` files discovered as
+`build/release/release_config_map.mk` or
+`device/*/*/release/release_config_map.mk` (`core/release_config.mk`), and this
+manifest's set is just `ap2a` (Android 14 QPR2).
+
+`bp2a` was my inference from OrangeFox's **fox_16.0** README
+(`lunch twrp_mondrian-bp2a-eng`) — correct for Android 16, wrong here.
+`ap2a` is now the first candidate and the value declared in
+`COMMON_LUNCH_CHOICES`.
+
+### Cause 5 — the release list was guessed; now it is probed *and reported*
+
+Run 5's probe redirected each attempt to `/dev/null`, so the real error for the
+valid release (`ap2a`) was thrown away — only `bp2a`'s error survived. The probe
+now captures and prints the tail of every failed attempt, and additionally
+prints:
+
+* the number of entries in `out/.module_paths/AndroidProducts.mk.list` and any
+  `xiaomi`/`mars` entry in it — this is how the build system discovers
+  `AndroidProducts.mk` (`core/product_config.mk`:
+  `$(file <$(OUT_DIR)/.module_paths/AndroidProducts.mk.list)`), so a missing
+  entry means the device tree is invisible to the build;
+* a listing of `device/xiaomi/mars/`.
+
+The `** Don't have a product spec for: 'twrp_mars'` line is **not yet
+explained**: it may be a mere consequence of the `bp2a` release error, or it may
+mean the product is not being registered. Run 6 will tell us which, because it
+now prints the discovery list. If the list has no mars entry, the next fix is to
+make the tree visible to Soong (and `COMMON_LUNCH_CHOICES` would then also have
+raised "contains products(s) not defined in this file" — worth watching for).
+
+## Run 6
 
 | field | value |
 | --- | --- |
-| trigger | push of the lunch-combo fix |
-| caches | warm (sync ~10 min) |
-| expectation | first run that reaches a real compile: 30–60 min for `mka recoveryimage` |
+| trigger | push of the `ap2a` fix + verbose lunch probe |
+| caches | warm (sync ~10–19 min) |
+| what it will prove | whether the product is discovered; if so, the first real compile starts |
 
 ### What to look at if run 5 fails
 

@@ -44,7 +44,7 @@ This repository **is** the device tree. That follows the TWRP convention, so
 
 ```
 BoardConfig.mk           # board config: A/B, recovery-as-boot, prebuilt kernel, TW_ switches
-twrp_mars.mk             # PRODUCT_NAME := twrp_mars   (lunch: twrp_mars-bp2a-eng)
+twrp_mars.mk             # PRODUCT_NAME := twrp_mars   (lunch: twrp_mars-ap2a-eng)
 fox_mars.mk              # OrangeFox OF_* switches
 device.mk                # product config: recovery modules, touch firmware, crypto off
 AndroidProducts.mk       # PRODUCT_MAKEFILES + COMMON_LUNCH_CHOICES
@@ -125,7 +125,7 @@ cd "$FOX_DIR"
 export LC_ALL=C FOX_BUILD_DEVICE=mars FOX_BUILD_TYPE=Unofficial
 export ALLOW_MISSING_DEPENDENCIES=true
 source build/envsetup.sh
-lunch twrp_mars-bp2a-eng
+lunch twrp_mars-ap2a-eng
 mka recoveryimage
 # -> out/target/product/mars/boot.img
 ```
@@ -146,7 +146,7 @@ wraps in `scripts/fox-sync.sh`. See [docs/PROVENANCE.md](docs/PROVENANCE.md) §4
 ### 3.5 The lunch target
 
 ```sh
-lunch twrp_mars-bp2a-eng
+lunch twrp_mars-ap2a-eng
 ```
 
 **Three parts are mandatory.** The `build/make` fork that fox_14.1 uses
@@ -170,7 +170,7 @@ This is why OrangeFox's own fox_16.0 documentation says
 `COMMON_LUNCH_CHOICES := twrp_vayu-eng` (fox_14.1) is stale — that entry cannot
 work on this build system either.
 
-`bp2a` is this manifest's Android 14 QPR3 release token (the OrangeFox sync
+`ap2a` is this manifest's release token (the OrangeFox sync
 script pins `android14-qpr3-release` for the projects it re-clones). The CI
 probes `bp2a ap2a ap3a udc trunk_staging` before giving up, so a rename in a
 future manifest will not need a code change.
