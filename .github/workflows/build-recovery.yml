@@ -84,8 +84,9 @@ jobs:
                       "$AGENT_TOOLSDIRECTORY" || true
           sudo apt-get clean
           df -h /
-          echo "--- biggest consumers ---"
-          du -xh --max-depth=1 / 2>/dev/null | sort -h | tail -12
+          # NOTE: do NOT run `du -x /` here.  Walking the whole runner
+          # filesystem takes upwards of ten minutes and delayed the first run
+          # noticeably; `df -h` is enough to know whether the cleanup worked.
 
       # ---------------------------------------------------------------------
       - name: Checkout device tree

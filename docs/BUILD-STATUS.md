@@ -16,6 +16,30 @@ Updated by hand after each run.
 | artifacts | — |
 | notes | First run, cold cache. Expected duration 1.5–2.5 h (sync 30–60 min + build 30–60 min). No cache exists yet, so `Restore .repo cache` is a guaranteed miss. |
 
+### Run 1 — step log so far
+
+| step | outcome |
+| --- | --- |
+| 1 Set up job | ✅ |
+| 2 Free up disk space | ✅ (but see below — it was slow) |
+| 3 Checkout device tree | ✅ |
+| 4 Prepare build environment | ✅ |
+| 5 Install build dependencies | ✅ (apt + Google's `repo` launcher) |
+| 6 Restore prebuilts cache | ✅ miss (expected, first run) |
+| 7 Restore .repo cache | ✅ miss (expected, first run) |
+| 8 **Sync OrangeFox fox_14.1** | ▶️ running (30–60 min expected) |
+| 9–17 | pending |
+
+The fact that step 8 started at all is already a meaningful result: it proves the
+corrected sync route (`scripts/fox-sync.sh` → `orangefox_sync.sh --branch 14.1`)
+is accepted, and that the `repo init -b fox_14.1` in the original plan would
+have been the wrong call.
+
+**Fix applied after this observation:** the "Free up disk space" step originally
+ended with `du -xh --max-depth=1 /`, which walks the entire runner filesystem and
+took several minutes for no benefit. It was removed; `df -h` is enough. (This is
+why step 2 looked slow in run 1.)
+
 ### Aborted attempts before run 1
 
 Two runs were started at 10:07 UTC and both ended `cancelled`, because a
