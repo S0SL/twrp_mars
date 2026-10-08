@@ -10,3 +10,5 @@
 # Editor / OS noise
 *~
 .DS_Store
+prebuilt/modules/
+recovery/root/lib/modules/*.ko

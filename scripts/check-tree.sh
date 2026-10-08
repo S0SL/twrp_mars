@@ -64,6 +64,7 @@ REQUIRED=(
 	docs/kernel-prep/config-dryrun.sh
 	docs/kernel-prep/0001-mars-touch-modules.patch
 	scripts/publish-release.sh
+	scripts/fetch-modules.sh
 )
 for f in "${REQUIRED[@]}"; do
 	[ -f "$f" ] && pass "$f" || fail "$f is missing"

@@ -62,6 +62,7 @@ recovery/root/           # merged into the recovery ramdisk root
   lib/firmware/st_fts_k2*.ftb # touch firmware inside the ramdisk
 prebuilt/                # kernel Image lands here at build time (git-ignored)
 scripts/fetch-kernel.sh  # downloads / extracts the prebuilt kernel Image
+scripts/fetch-modules.sh # (prepared) downloads the matching touch/display .ko set
 scripts/fox-sync.sh      # the CORRECT fox_14.1 sync procedure
 scripts/check-tree.sh    # static validation of the tree (no AOSP needed)
 docs/                    # provenance, fstab diff, known issues, phase-2 notes
