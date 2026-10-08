@@ -1,0 +1,38 @@
+[Unit]
+Description=mars (Xiaomi Mi 11 Pro) OrangeFox recovery build (self-healing, boot-start)
+Documentation=https://github.com/S0SL/twrp_mars/blob/main/docs/BUILD-ON-SERVER.md
+# the tree is fetched from the network; do not block the boot on it, but do
+# start as soon as the network is usable
+After=network-online.target
+Wants=network-online.target
+# keep retrying a failing build, but do not spin forever
+StartLimitIntervalSec=86400
+StartLimitBurst=20
+
+[Service]
+Type=simple
+User=shen
+Group=shen
+WorkingDirectory=/home/shen
+Environment=HOME=/home/shen
+Environment=PATH=/home/shen/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LC_ALL=C
+Environment=MARS_JOBS=4
+Environment=MARS_MEM_LOW_MB=1200
+Environment=MARS_MEM_HIGH_MB=2800
+ExecStart=/usr/local/bin/mars-build-run.sh
+# one log file that survives reboots, and never grows without bound
+StandardOutput=append:/home/shen/logs/systemd-build.log
+StandardError=append:/home/shen/logs/systemd-build.log
+Restart=on-failure
+RestartSec=60
+# a first build is sync (~40 min) + compile (~30-60 min); never time it out
+TimeoutStartSec=infinity
+TimeoutStopSec=120
+# be a good citizen on a 4-core box and survive a memory spike
+Nice=5
+OOMScoreAdjust=200
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

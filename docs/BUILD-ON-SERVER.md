@@ -195,3 +195,99 @@ three-part, no obsolete build variables, workflow and shell syntax):
    /tmp/recovery.log`) for the module-loading lines:
    `Checking directory: /lib/modules`, `Modules Loaded: N` — that is the direct
    measurement of whether touch/display can come up.
+
+---
+
+## 9. Running the build unattended (systemd: boot-start, self-healing)
+
+A first build is 1.5–2.5 h of syncing plus compiling, and an SSH session is the
+least reliable part of that. The build therefore runs as a **systemd service**,
+so it survives a dropped SSH connection, a reboot, and the flaky parts of the
+network — with nobody logged in.
+
+Two files, both in this repository:
+
+| file | installed as | what |
+| --- | --- | --- |
+| `scripts/mars-build-run.sh` | `/usr/local/bin/mars-build-run.sh` | the idempotent, self-healing entrypoint |
+| `scripts/mars-build.service` | `/etc/systemd/system/mars-build.service` | the unit (`WantedBy=multi-user.target`, `Restart=on-failure`) |
+
+### Install (no network needed)
+
+Copy the two files to the machine any way you like (on the reference server they
+are already in `~/`, and they arrive in `~/twrp-mars/scripts/` after a
+`git pull`), then run exactly these four lines:
+
+```sh
+sudo install -m 755 ~/mars-build-run.sh /usr/local/bin/mars-build-run.sh
+sudo install -m 644 ~/mars-build.service /etc/systemd/system/mars-build.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now mars-build
+```
+
+After that, the day-to-day command is one line:
+
+```sh
+sudo systemctl enable --now mars-build     # enable at boot + start right now
+systemctl status mars-build                # what is it doing
+tail -f ~/logs/systemd-build.log           # follow the build
+```
+
+Neither file needs the network to install, and the unit fetches nothing from
+GitHub — it works entirely from the tree already on disk.
+
+### What the entrypoint guarantees
+
+* **Idempotent.** `flock` allows one instance at a time; if `dist/boot.img`
+  already exists it exits immediately (`MARS_FORCE=1` rebuilds); after a
+  successful sync + patch phase it writes `~/.mars-sync-complete`, and every
+  later start skips straight to the compile.
+* **Self-healing.** The network-heavy parts are retried in a loop (12 sync
+  attempts, each preceded by a repair pass over the projects that keep dying),
+  and `Restart=on-failure` + `RestartSec=60` makes systemd retry a failed run
+  (`StartLimitBurst=20` per day stops an endless spin). A successful build exits
+  0 and is not retried.
+* **Memory-guarded.** A watchdog thread pauses the heavy fetches (`SIGSTOP`) as
+  soon as `MemAvailable` drops below `MARS_MEM_LOW_MB`, and resumes them
+  (`SIGCONT`) once it is back above `MARS_MEM_HIGH_MB`, so a full-history pack
+  can never take `sshd` or the tunnel client down with it. Anything paused is
+  resumed on exit.
+* **Repairs the failure this machine actually hit.** `repo` passes `--depth=1`
+  only to projects it considers *new*; for a project whose directory already
+  exists it silently fetches **complete history** — a 10–20 GB pack, which is
+  what kept dying. The entrypoint notices a project directory that holds only
+  failed `tmp_pack_*` files, removes it so the retry is shallow again, and
+  reclaims leftover `tmp_pack_*` garbage (54 GB in one run) between attempts.
+  See `BUILD-STATUS.md` §"Server build 1".
+
+### Knobs (all optional, set via the unit's `Environment=` lines)
+
+| variable | default | meaning |
+| --- | --- | --- |
+| `MARS_HOME` | `/home/shen` | where the AOSP tree and the device tree live |
+| `MARS_JOBS` | `4` | `mka` parallelism (4 cores / 15 GB on this box) |
+| `MARS_MEM_LOW_MB` | `1200` | pause fetches below this `MemAvailable` |
+| `MARS_MEM_HIGH_MB` | `2800` | resume them above this |
+| `FOX_BUILD_TYPE` | `Unofficial` | `FOX_BUILD_TYPE` |
+| `MARS_FORCE` | *(unset)* | `1` rebuilds even if `dist/boot.img` exists |
+
+### Logs and artifacts
+
+| path | contents |
+| --- | --- |
+| `~/logs/systemd-build.log` | everything the unit prints (also in the journal) |
+| `~/twrp-mars/dist/boot.img` | **the artifact** |
+| `~/twrp-mars/dist/BUILD-INFO.txt` | what was built from what, plus `sha256sum`s |
+
+### After the box was off (or a run was killed)
+
+Nothing special: the unit is `enabled`, so a reboot starts it again, the sync
+resumes out of `~/.repo` without re-downloading, and `~/.mars-sync-complete`
+skips whatever already succeeded. A run killed mid-checkout can, however, leave a
+stale git lock; the symptom is
+`fatal: unable to create '.../.git/index.lock': File exists` together with repo
+reporting `Checking out local projects failed`. Clear it with:
+
+```sh
+find ~/fox_14.1 -name index.lock -mmin +3 -print -delete
+```
