@@ -25,8 +25,14 @@ The recovery kernel is **prebuilt** (`TARGET_PREBUILT_KERNEL`), so
 **empty** `/lib/modules`. `device.mk` therefore relies on
 
 ```make
-TW_LOAD_VENDOR_MODULES := "xiaomi_touch.ko fts_touch_spi.ko fts_touch_spi_k2.ko focaltech_touch.ko adsp_loader_dlkm.ko qti_battery_charger.ko"
+TW_LOAD_VENDOR_MODULES := "xiaomi_touch.ko fts_touch_spi.ko msm_drm.ko hwid.ko \
+    mmhardware_sysfs_dlkm.ko qti_battery_charger_main.ko adsp_loader_dlkm.ko \
+    apr_dlkm.ko q6_notifier_dlkm.ko q6_pdr_dlkm.ko snd_event_dlkm.ko"
 ```
+
+(LineageOS' own mars recovery list, with every file name resolved against this
+kernel's Makefiles — see §4.4; the earlier version of this list named a module
+that does not exist and omitted the display driver.)
 
 which makes TWRP `insmod` those modules **from the installed ROM's
 `/vendor/lib/modules`** at runtime. That works only when the ROM's modules were
@@ -418,8 +424,9 @@ So in the shipped `Image`: `CONFIG_TOUCHSCREEN_ST` is off,
 `CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI` can never be `m`, and
 `CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE` is never selected. **Running
 `make modules` against the current configuration therefore produces no mars
-touch driver at all** — the modules must be built with the MARS config, in the
-same build as the `Image` they will be loaded into.
+touch driver at all.** The two symbols have to be enabled as a fragment — the
+minimal alternative to pulling in all of `star_QGKI.config` — and the modules
+must be built in the same run as the `Image` they will be loaded into (§5.1).
 
 That also means the current recovery can only get touch from the ROM's
 `/vendor/lib/modules` (I7), which is why the cross-ROM goal is blocked today.
