@@ -44,7 +44,7 @@ This repository **is** the device tree. That follows the TWRP convention, so
 
 ```
 BoardConfig.mk           # board config: A/B, recovery-as-boot, prebuilt kernel, TW_ switches
-twrp_mars.mk             # PRODUCT_NAME := twrp_mars   (lunch target: twrp_mars-eng)
+twrp_mars.mk             # PRODUCT_NAME := twrp_mars   (lunch: twrp_mars-bp2a-eng)
 fox_mars.mk              # OrangeFox OF_* switches
 device.mk                # product config: recovery modules, touch firmware, crypto off
 AndroidProducts.mk       # PRODUCT_MAKEFILES + COMMON_LUNCH_CHOICES
@@ -124,7 +124,7 @@ cd "$FOX_DIR"
 export LC_ALL=C FOX_BUILD_DEVICE=mars FOX_BUILD_TYPE=Unofficial
 export ALLOW_MISSING_DEPENDENCIES=true
 source build/envsetup.sh
-lunch twrp_mars-eng
+lunch twrp_mars-bp2a-eng
 mka recoveryimage
 # -> out/target/product/mars/boot.img
 ```
@@ -144,12 +144,39 @@ wraps in `scripts/fox-sync.sh`. See [docs/PROVENANCE.md](docs/PROVENANCE.md) §4
 
 ### 3.5 The lunch target
 
-`twrp_mars-eng`.
+```sh
+lunch twrp_mars-bp2a-eng
+```
 
-Despite the branding, `fox_14.1` device trees keep `PRODUCT_NAME := twrp_<device>`
-— the reference tree `OrangeFox/device/vayu` (branch `fox_14.1`) declares
-`COMMON_LUNCH_CHOICES := twrp_vayu-eng`, and OrangeFox's own sync script test
-build runs `lunch twrp_<device>-eng` then `mka adbd recoveryimage`.
+**Three parts are mandatory.** The `build/make` fork that fox_14.1 uses
+(`nebrassy/android_build`, `android-14`) enforces this at the top of `lunch()`:
+
+```sh
+# This must be <product>-<release>-<variant>
+IFS="-" read -r product release variant <<< "$selection"
+if [[ -z "$product" ]] || [[ -z "$release" ]] || [[ -z "$variant" ]]
+then
+    echo "Invalid lunch combo: $selection"
+    echo "Valid combos must be of the form <product>-<release>-<variant>"
+    return 1
+fi
+```
+
+So the historical two-part `twrp_mars-eng` splits into
+`product=twrp_mars, release=eng, variant=<empty>` and is **always rejected**.
+This is why OrangeFox's own fox_16.0 documentation says
+`lunch twrp_mondrian-bp2a-eng`, and why `OrangeFox/device/vayu`'s
+`COMMON_LUNCH_CHOICES := twrp_vayu-eng` (fox_14.1) is stale — that entry cannot
+work on this build system either.
+
+`bp2a` is this manifest's Android 14 QPR3 release token (the OrangeFox sync
+script pins `android14-qpr3-release` for the projects it re-clones). The CI
+probes `bp2a ap2a ap3a udc trunk_staging` before giving up, so a rename in a
+future manifest will not need a code change.
+
+Despite the OrangeFox branding, `PRODUCT_NAME` stays `twrp_<device>` — the
+reference tree `OrangeFox/device/vayu` (branch `fox_14.1`) declares
+`PRODUCT_NAME := twrp_vayu`.
 
 ---
 

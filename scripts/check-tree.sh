@@ -173,9 +173,19 @@ grep -q '^PRODUCT_NAME := twrp_\$(PRODUCT_RELEASE_NAME)' twrp_mars.mk \
 grep -q 'COMMON_LUNCH_CHOICES' AndroidProducts.mk \
 	&& pass "AndroidProducts.mk declares COMMON_LUNCH_CHOICES" \
 	|| fail "AndroidProducts.mk has no COMMON_LUNCH_CHOICES"
-grep -q 'twrp_mars-eng' AndroidProducts.mk \
-	&& pass "lunch target twrp_mars-eng is declared" \
-	|| fail "lunch target twrp_mars-eng is not declared"
+# fox_14.1's lunch() requires <product>-<release>-<variant>: a 2-part combo is
+# rejected with "Valid combos must be of the form <product>-<release>-<variant>"
+# (that is what killed CI run 4).  Every declared choice must have 3 parts.
+BADCHOICE=""
+for c in $(sed -n '/COMMON_LUNCH_CHOICES/,/^$/p' AndroidProducts.mk \
+           | grep -oE 'twrp_mars[a-z0-9_-]*'); do
+	[ "$(printf '%s' "$c" | awk -F- '{print NF}')" = 3 ] || BADCHOICE="$BADCHOICE $c"
+done
+if [ -z "$BADCHOICE" ] && grep -q 'twrp_mars-[a-z0-9_]*-eng' AndroidProducts.mk; then
+	pass "lunch choices are 3-part (product-release-variant)"
+else
+	fail "non 3-part lunch choice(s):$BADCHOICE -- fox_14.1 lunch() rejects them"
+fi
 grep -q 'TARGET_PREBUILT_KERNEL' BoardConfig.mk \
 	&& pass "BoardConfig.mk uses TARGET_PREBUILT_KERNEL" \
 	|| fail "BoardConfig.mk does not use TARGET_PREBUILT_KERNEL"

@@ -85,15 +85,86 @@ it fails fast if `orangefox_soong.mk` is not included, or if
 `vendor/twrp/config/common.mk`, `device/qcom/common`, `device/qcom/twrp-common`
 or `external/se_omapi` are missing.
 
-## Run 2
+## Runs 2, 3 and 4
+
+| run | commit | outcome |
+| --- | --- | --- |
+| 2 | `1042923` | **cancelled on purpose.** It carried the `envsetup -u` and vendor/twrp-patch fixes but not the display-lib guard; it then stalled 10+ minutes in `Install build dependencies`, so it was cancelled to free the runner for run 4, which had every fix. |
+| 3 | `b16ac85` | **cancelled** — it was still pending when run 4 was pushed, and GitHub keeps only the newest pending run per concurrency group. |
+| 4 | `38e8a50` | **build failed again — diagnosed and fixed (see below).** All 12 steps before the build passed. |
+
+### Run 4 — what the previous fixes achieved
+
+| step | outcome | note |
+| --- | --- | --- |
+| 5 Install build dependencies | ✅ | **~50 s** once the apt list was split into tiers (was 10+ min stalled in run 2) |
+| 8 Sync OrangeFox fox_14.1 | ✅ | **~10 min** |
+| 9/10 Save caches | ✅ | |
+| 11 Fetch prebuilt kernel | ✅ | |
+| 12 Install device tree | ✅ | |
+| 13 Build recoveryimage | ❌ | see below |
+
+So the `set -u` fix worked — `build/envsetup.sh` sourced cleanly and defined
+`lunch()` — as did the vendor/twrp patch workaround and the display-lib guard.
+
+### Failure 3 — `lunch` requires THREE parts, so `twrp_mars-eng` can never work
+
+```
+including device/xiaomi/mars/vendorsetup.sh
+Invalid lunch combo: twrp_mars-eng
+Valid combos must be of the form <product>-<release>-<variant>
+ERROR: 'lunch twrp_mars-eng' failed.
+```
+
+`build/make/envsetup.sh` in the fox_14.1 fork (`nebrassy/android_build`,
+`android-14`) enforces this at the top of `lunch()`:
+
+```sh
+# This must be <product>-<release>-<variant>
+IFS="-" read -r product release variant <<< "$selection"
+if [[ -z "$product" ]] || [[ -z "$release" ]] || [[ -z "$variant" ]]
+then
+    echo "Invalid lunch combo: $selection"
+    echo "Valid combos must be of the form <product>-<release>-<variant>"
+    return 1
+fi
+```
+
+`twrp_mars-eng` yields `product=twrp_mars, release=eng, variant=<empty>`, so it
+is rejected **before** the product is even looked up. This was not a device-tree
+bug: the ticket's suggested target (and OrangeFox's own `twrp_vayu-eng` in
+`OrangeFox/device/vayu` fox_14.1, and even the test build inside
+`orangefox_sync.sh`) is wrong for this build system.
+
+**Fixed.** The target is now the three-part `twrp_mars-bp2a-eng`:
+
+* `AndroidProducts.mk` declares `twrp_mars-bp2a-eng` / `twrp_mars-bp2a-userdebug`.
+* The CI probes `bp2a ap2a ap3a udc trunk_staging` and lunches the first combo
+  that works, so a release-token rename does not need a code change.
+* `scripts/check-tree.sh` fails if any declared choice is not three-part.
+
+`bp2a` is the Android 14 QPR3 release token used by this manifest; OrangeFox's
+own fox_16.0 README documents `lunch twrp_mondrian-bp2a-eng`, and the sync
+script pins `android14-qpr3-release`.
+
+## Run 5
 
 | field | value |
 | --- | --- |
-| trigger | push of the run-1 fixes |
-| runner | `ubuntu-22.04` |
-| caches | prebuilts **hit**, `.repo` **hit** |
-| expectation | sync 5–10 min (warm), build 30–60 min |
-| status | see the Actions tab |
+| trigger | push of the lunch-combo fix |
+| caches | warm (sync ~10 min) |
+| expectation | first run that reaches a real compile: 30–60 min for `mka recoveryimage` |
+
+### What to look at if run 5 fails
+
+| symptom | likely cause | action |
+| --- | --- | --- |
+| `No space left on device` | I1 in `KNOWN_ISSUES.md` | re-run with `runner: ubuntu-latest-4-cores` |
+| `repo init` / `repo sync` failure | upstream manifest or network flake | re-run; the sync is `--force-sync` and resumable |
+| `Failed to patch the twrp-14 minimal manifest` | upstream `build/make` moved and the OrangeFox patch no longer applies | bump the `OrangeFox/sync` clone (it applies the same patches) |
+| missing `libdisplayconfig.qti` / `vendor.display.config@*` | no CAF display project in the manifest | already guarded (I16); supply the `.so` files as prebuilts if the display stays dark |
+| `vendor/recovery/OrangeFox_A14.sh` aborts with `abort 100` | build system not patched (wrong sync route) | verify `scripts/fox-sync.sh` was used, never `repo init -b fox_14.1` |
+| any valid combo is rejected | release token renamed upstream | add candidates to the probe list in the workflow |
 
 ### Aborted attempts before run 1
 
