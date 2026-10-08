@@ -65,6 +65,7 @@ scripts/fetch-kernel.sh  # downloads / extracts the prebuilt kernel Image
 scripts/fox-sync.sh      # the CORRECT fox_14.1 sync procedure
 scripts/check-tree.sh    # static validation of the tree (no AOSP needed)
 docs/                    # provenance, fstab diff, known issues, phase-2 notes
+docs/RAMDISK-MODULES.md  # plan: build touch/display .ko into the recovery ramdisk (I7/I11)
 .github/workflows/build-recovery.yml
 ```
 
@@ -205,6 +206,7 @@ deliberately **not** set.
 | CI workflow | done |
 | Pushed to GitHub | see the workflow run linked in the release/README history |
 | First CI build | see [docs/BUILD-STATUS.md](docs/BUILD-STATUS.md) |
+| Touch/display `.ko` in the ramdisk (I7/I11) | plan written, **not applied** — needs a kernel-repo change: [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md) |
 | Verified booting on hardware | **not yet** — nothing was flashed |
 | `/data` decryption | not started (phase 2) |
 
