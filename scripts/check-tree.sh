@@ -58,6 +58,12 @@ REQUIRED=(
 	docs/PHASE2-CRYPTO.md
 	docs/KNOWN_ISSUES.md
 	docs/BUILD-STATUS.md
+	docs/RAMDISK-MODULES.md
+	docs/kernel-prep/README.md
+	docs/kernel-prep/apply-kernel-prep.sh
+	docs/kernel-prep/config-dryrun.sh
+	docs/kernel-prep/0001-mars-touch-modules.patch
+	scripts/publish-release.sh
 )
 for f in "${REQUIRED[@]}"; do
 	[ -f "$f" ] && pass "$f" || fail "$f is missing"

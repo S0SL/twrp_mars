@@ -1,0 +1,131 @@
+diff --git a/.github/workflows/build-kernel.yml b/.github/workflows/build-kernel.yml
+index 4d03a82fa..0930f8905 100644
+--- a/.github/workflows/build-kernel.yml
++++ b/.github/workflows/build-kernel.yml
+@@ -78,6 +78,10 @@ jobs:
+       - name: Package AnyKernel3 zip
+         run: ./ci/package-anykernel.sh
+ 
++      - name: Package kernel modules tarball
++        run: ./ci/package-modules.sh
++
++
+       - name: Build fastboot-flashable boot.img (best effort)
+         continue-on-error: true
+         run: |
+@@ -153,6 +157,7 @@ jobs:
+           path: |
+             dist/*.zip
+             dist/*.img
++            dist/kernel-modules-*.tar.gz
+           if-no-files-found: error
+           retention-days: 30
+ 
+diff --git a/arch/arm64/configs/vendor/mars_recovery_touch.config b/arch/arm64/configs/vendor/mars_recovery_touch.config
+new file mode 100644
+index 000000000..483a7baa2
+--- /dev/null
++++ b/arch/arm64/configs/vendor/mars_recovery_touch.config
+@@ -0,0 +1,19 @@
++# Touch drivers the mars recovery needs, built as modules instead of being
++# absent.  Same two symbols LineageOS' vendor/star_QGKI.config sets for
++# mars/star/venus.
++#
++# Measured side effect on the built-in kernel: none.  Merging this fragment
++# after vendor/lahaina-qgki_defconfig + vendor/debugfs.config +
++# vendor/xiaomi_QGKI.config changes exactly these two lines in the resulting
++# .config (both Kconfig entries are plain tristate with only
++# `depends on I2C` / `depends on INPUT_TOUCHSCREEN` -- no `select`):
++#   -# CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI is not set
++#   +CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI=m
++#   -# CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE is not set
++#   +CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE=m
++#
++# The modules must be built in the same run as the Image: CONFIG_LOCALVERSION_AUTO
++# puts the commit hash into vermagic, so modules from another build can never be
++# loaded into it.
++CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI=m
++CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE=m
+diff --git a/ci/build-kernel.sh b/ci/build-kernel.sh
+index 51a218af5..ccc55d6b1 100755
+--- a/ci/build-kernel.sh
++++ b/ci/build-kernel.sh
+@@ -22,7 +22,7 @@ OUT="${OUT:-$ROOT/out}"
+ CLANG_DIR="${CLANG_DIR:-$ROOT/toolchain/clang}"
+ JOBS="${JOBS:-$(nproc)}"
+ NO_DEBUG_INFO="${NO_DEBUG_INFO:-1}"
+-MAKE_TARGET="${MAKE_TARGET:-Image}"
++MAKE_TARGET="${MAKE_TARGET:-Image modules}"
+ 
+ export PATH="$CLANG_DIR/bin:$PATH"
+ 
+@@ -30,6 +30,7 @@ BASE_CONFIG="vendor/lahaina-qgki_defconfig"
+ FRAGMENTS=(
+ 	"vendor/debugfs.config"
+ 	"vendor/xiaomi_QGKI.config"
++	"vendor/mars_recovery_touch.config"
+ )
+ 
+ # TARGET_PRODUCT=mars mirrors LineageOS' TARGET_KERNEL_ADDITIONAL_FLAGS
+diff --git a/ci/package-modules.sh b/ci/package-modules.sh
+new file mode 100755
+index 000000000..e5dfe102e
+--- /dev/null
++++ b/ci/package-modules.sh
+@@ -0,0 +1,56 @@
++#!/usr/bin/env bash
++#
++# Collect the kernel modules built by ci/build-kernel.sh into a tarball the
++# recovery device tree consumes (twrp_mars: docs/RAMDISK-MODULES.md).
++#
++# The recovery ramdisk only needs the flat `*.ko` basenames, but
++# modules_install's tree (modules.dep / modules.alias / modules.softdep) is
++# what lets TWRP's libmodprobe resolve dependencies at runtime, so both are
++# shipped.
++#
++# Env:
++#   OUT    kernel O= directory (default <repo>/out)
++#   DIST   output directory     (default <repo>/dist)
++#
++set -euo pipefail
++
++ROOT="$(cd "$(dirname "$0")/.." && pwd)"
++OUT="${OUT:-$ROOT/out}"
++DIST="${DIST:-$ROOT/dist}"
++STAGE="$ROOT/modules_root"
++
++mkdir -p "$DIST"
++rm -rf "$STAGE"
++
++kmake() { make -C "$ROOT" O="$OUT" ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- "$@"; }
++
++echo "== modules_install -> $STAGE =="
++kmake INSTALL_MOD_PATH="$STAGE" modules_install
++
++KV="$(make -s -C "$ROOT" O="$OUT" ARCH=arm64 kernelrelease)"
++echo "== kernel release: $KV =="
++DIR="$STAGE/lib/modules/$KV"
++[ -d "$DIR" ] || { echo "ERROR: modules_install produced no $DIR" >&2; exit 1; }
++
++COUNT="$(find "$DIR" -maxdepth 1 -name '*.ko' | wc -l)"
++echo "== $COUNT modules built =="
++
++# The recovery depends on these three: touch (fts + xiaomi feature) and the
++# panel driver (display is a module for lahaina).  Fail loudly rather than
++# publishing a tarball that cannot bring the recovery UI up.
++MISSING=0
++for want in fts_touch_spi.ko xiaomi_touch.ko msm_drm.ko; do
++	if [ -f "$DIR/$want" ]; then
++		echo "   ok       $want"
++	else
++		echo "   MISSING  $want"
++		MISSING=1
++	fi
++done
++[ "$MISSING" = 0 ] || { echo "ERROR: the recovery's modules are not in this build" >&2; exit 1; }
++
++TARBALL="$DIST/kernel-modules-$KV.tar.gz"
++tar -C "$DIR" -czf "$TARBALL" .
++printf '%s\n' "$KV" > "$DIST/kernel-modules.release"
++ls -l "$TARBALL"
++sha256sum "$TARBALL"
