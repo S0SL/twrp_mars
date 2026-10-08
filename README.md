@@ -78,7 +78,20 @@ docs/RAMDISK-MODULES.md  # plan: build touch/display .ko into the recovery ramdi
 
 ## 3. Building
 
-### 3.1 On CI (recommended)
+### 3.1 On your own server (recommended)
+
+```sh
+git clone https://github.com/S0SL/twrp_mars.git ~/twrp_mars
+~/twrp_mars/scripts/build-local.sh --fox-dir ~/fox_14.1
+# -> ~/twrp_mars/dist/boot.img
+```
+
+Full walkthrough — hardware/disk requirements, one-time `apt-get`, timings,
+ccache, artifacts and a troubleshooting table built from every failure this
+project has hit — is in **[docs/BUILD-ON-SERVER.md](docs/BUILD-ON-SERVER.md)**.
+The cloud workflow below stays valid as a fallback.
+
+### 3.2 On CI (fallback)
 
 `.github/workflows/build-recovery.yml`, manual trigger:
 
@@ -96,10 +109,11 @@ Timing on a stock `ubuntu-22.04` GitHub runner:
 | `mka recoveryimage` | **30–60 min** |
 | **total** | **~1.5–2.5 h cold**, ~1 h warm |
 
-Job timeout is set to 350 minutes. The first run has no cache, so budget the
-full number above.
+Job timeout is set to 350 minutes. Measured disk on that runner: 118 GB used
+right after the sync, i.e. only ~28 GB left for `out/` — which is why the
+server path is preferred.
 
-### 3.2 Static checks (no AOSP tree needed)
+### 3.3 Static checks (no AOSP tree needed)
 
 ```sh
 ./scripts/check-tree.sh
@@ -108,11 +122,14 @@ full number above.
 Validates that every file the build system looks for exists, that
 `recovery.fstab` is a well-formed fs_mgr fstab with only known flags, that
 `twrp.flags` is well-formed, that makefile conditionals balance, that the
-workflow is valid YAML, and that no build-host path or wrong codename leaked in.
+workflow is valid YAML, that no obsolete build variable (Kati hard error) is
+set, and that no build-host path or wrong codename leaked in.
 
-### 3.3 Locally
+### 3.4 Locally by hand
 
-You need ~120 GB free and a Linux box; a full Android 14 tree is involved.
+You need ~150–200 GB free and a Linux box; a full Android 14 tree is involved.
+[docs/BUILD-ON-SERVER.md](docs/BUILD-ON-SERVER.md) has the dependency list and
+the troubleshooting table; `scripts/build-local.sh` runs exactly this:
 
 ```sh
 export FOX_DIR=$HOME/fox_14.1
@@ -125,13 +142,15 @@ rsync -a --exclude '.git/' --exclude '.github/' --exclude 'scripts/' \
 cd "$FOX_DIR"
 export LC_ALL=C FOX_BUILD_DEVICE=mars FOX_BUILD_TYPE=Unofficial
 export ALLOW_MISSING_DEPENDENCIES=true
+set +u                       # build/envsetup.sh is not nounset-safe
 source build/envsetup.sh
+set -u
 lunch twrp_mars-ap2a-eng
 mka recoveryimage
 # -> out/target/product/mars/boot.img
 ```
 
-### 3.4 Why `scripts/fox-sync.sh` and not `repo init -b fox_14.1`
+### 3.5 Why `scripts/fox-sync.sh` and not `repo init -b fox_14.1`
 
 `git ls-remote --heads https://gitlab.com/OrangeFox/sync.git` returns **only
 `refs/heads/master`** — there is no `fox_14.1` branch on the sync repo, so
@@ -144,7 +163,7 @@ is not a valid command. `fox_14.1` is a *legacy* OrangeFox branch: the
 supported flow is `orangefox_sync.sh --branch 14.1`, which this repository
 wraps in `scripts/fox-sync.sh`. See [docs/PROVENANCE.md](docs/PROVENANCE.md) §4.
 
-### 3.5 The lunch target
+### 3.6 The lunch target
 
 ```sh
 lunch twrp_mars-ap2a-eng
@@ -204,10 +223,10 @@ deliberately **not** set.
 | --- | --- |
 | Device tree synthesised | done |
 | `recovery.fstab` / `twrp.flags` | done, mars-specific |
-| CI workflow | done |
-| Pushed to GitHub | see the workflow run linked in the release/README history |
-| First CI build | see [docs/BUILD-STATUS.md](docs/BUILD-STATUS.md) |
-| Touch/display `.ko` in the ramdisk (I7/I11) | plan written, **not applied** — needs a kernel-repo change: [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md) |
+| Build path | **moved to your own server** — [docs/BUILD-ON-SERVER.md](docs/BUILD-ON-SERVER.md) + `scripts/build-local.sh`; the cloud workflow stays as a fallback |
+| Cloud CI | 6 rounds, all fixed forward; run log history in [docs/BUILD-STATUS.md](docs/BUILD-STATUS.md) |
+| First successful build | **not yet** — the last blocker (an obsolete board variable) is fixed; next round should reach the compile |
+| Touch/display `.ko` in the ramdisk (I7/I11) | plan + kernel patch prepared and dry-run verified, **not pushed**: [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md), [docs/kernel-prep/](docs/kernel-prep/README.md) |
 | Verified booting on hardware | **not yet** — nothing was flashed |
 | `/data` decryption | not started (phase 2) |
 
@@ -255,4 +274,7 @@ Full list and the risk table: [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 * [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md) — plan for building the
   touch/display `.ko` into the recovery ramdisk (I7/I11), with the kernel-side
   patch prepared in [docs/kernel-prep/](docs/kernel-prep/README.md).
-* [docs/BUILD-STATUS.md](docs/BUILD-STATUS.md) — CI run history.
+* [docs/BUILD-ON-SERVER.md](docs/BUILD-ON-SERVER.md) — build it on your own
+  Ubuntu server from zero, with timings, requirements and the
+  troubleshooting table (`scripts/build-local.sh`).
+* [docs/BUILD-STATUS.md](docs/BUILD-STATUS.md) — build run history.

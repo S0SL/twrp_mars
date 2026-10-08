@@ -65,6 +65,8 @@ REQUIRED=(
 	docs/kernel-prep/0001-mars-touch-modules.patch
 	scripts/publish-release.sh
 	scripts/fetch-modules.sh
+	scripts/build-local.sh
+	docs/BUILD-ON-SERVER.md
 	scripts/obsolete-build-vars.txt
 )
 for f in "${REQUIRED[@]}"; do
