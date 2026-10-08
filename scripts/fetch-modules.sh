@@ -61,9 +61,12 @@ tar -xzf "$TMP/modules.tar.gz" -C "$TMP/root"
 # (lib/modules/<release>/...).  Find the directory that holds the modules.
 KODIR="$(dirname "$(find "$TMP/root" -maxdepth 3 -name '*.ko' | head -1)")"
 [ -n "$KODIR" ] && [ -d "$KODIR" ] || { echo "ERROR: no *.ko in the tarball" >&2; exit 1; }
-KVER="$(basename "$KODIR")"
 COUNT="$(find "$KODIR" -maxdepth 1 -name '*.ko' | wc -l)"
-echo "== $COUNT modules, kernel release '$KVER' =="
+# The release string the modules were built for (vermagic's first field).  It
+# is what has to match the Image -- the directory name only does so when the
+# tarball is a modules_install tree.
+KVER="$(strings "$KODIR/fts_touch_spi.ko" | grep -m1 '^vermagic=' | cut -d= -f2 | awk '{print $1}')"
+echo "== $COUNT modules, release '${KVER:-unknown}' =="
 
 # The modules the recovery cannot work without.
 MISSING=0
