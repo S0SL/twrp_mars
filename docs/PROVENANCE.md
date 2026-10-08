@@ -97,6 +97,7 @@ cloned directly to `device/xiaomi/mars`. The CI rsyncs it there while excluding
 | **U7** | AVB settings (`--flags 3`, sha256_rsa2048 test key) | Copied from FOX-VAYU / LOS-common. The device is unlocked, so this only affects the hash footer in the produced image. | Not blocking; revisit if flashing complains. |
 | **U8** | `AB_OTA_UPDATER` not set | Deliberately omitted (FOX-KOTAH-C does the same); setting it to `true` makes A14 require `AB_OTA_PARTITIONS` (`Makefile`: `$(error AB_OTA_PARTITIONS must be defined when using AB_OTA_UPDATER)`). | Not needed for a recovery-only build. |
 | **U9** | Disk usage of the fox_14.1 sync | The `nebrassy` twrp-14 manifest is a near-full AOSP 14 manifest (143 KB) with `remove-minimal.xml` pruning. Exact post-prune size not measured. | Watch the first CI run; if it fills the runner, use a larger runner (the workflow has a `runner` input). |
+| **U10** | Two option names copied from the **FOX-KOTAH** reference do not exist in fox_14.1 | `OF_NO_HAPTICS` and `OF_IGNORE_LOGICAL_MOUNT_ERRORS` are not read anywhere in `OrangeFox/bootable/Recovery` (fox_14.1) or `OrangeFox/vendor/recovery` (main). kotah81's `vendorsetup.sh` exported the latter, but nothing consumes it. | Both were **removed** from `fox_mars.mk`. Haptics are disabled with the real switch, `TW_NO_HAPTICS := true` in `BoardConfig.mk` (checked: `bootable/recovery/Android.mk` uses `ifeq ($(TW_NO_HAPTICS), true)`). `scripts/check-tree.sh` now guards against re-introducing them. |
 
 ## 4. Why the fox_14.1 sync does not work the way the ticket assumed
 

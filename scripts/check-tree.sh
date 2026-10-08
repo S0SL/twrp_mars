@@ -241,6 +241,19 @@ grep -q 'TARGET_OTA_ASSERT_DEVICE := mars' BoardConfig.mk \
 	&& pass "TARGET_OTA_ASSERT_DEVICE := mars" \
 	|| fail "TARGET_OTA_ASSERT_DEVICE is not mars"
 
+# Regression guard: option names that look plausible but are read by nothing in
+# fox_14.1.  See docs/PROVENANCE.md U10.
+for bogus in OF_NO_HAPTICS OF_IGNORE_LOGICAL_MOUNT_ERRORS; do
+	if grep -rqE "^[[:space:]]*${bogus}[[:space:]]*:?=" ./*.mk; then
+		fail "$bogus is not read by fox_14.1 (use TW_NO_HAPTICS in BoardConfig.mk instead)"
+	else
+		pass "$bogus not used (correct)"
+	fi
+done
+grep -qE '^TW_NO_HAPTICS[[:space:]]*:=[[:space:]]*true' BoardConfig.mk \
+	&& pass "TW_NO_HAPTICS := true (the switch OrangeFox actually reads)" \
+	|| fail "TW_NO_HAPTICS is not set to 'true' in BoardConfig.mk"
+
 # ---------------------------------------------------------------------------
 echo
 if [ "$FAIL" -eq 0 ]; then

@@ -18,10 +18,13 @@ OF_NO_TREBLE_COMPATIBILITY_CHECK := 1
 OF_NO_MIUI_PATCH_WARNING := 1
 OF_DONT_PATCH_ENCRYPTED_DEVICE := 1
 
-# Let OrangeFox ignore logical (super) partition mount hiccups: on A/B
-# sm8350 devices with a freshly wiped super, some logical partitions are
-# legitimately absent.
-OF_IGNORE_LOGICAL_MOUNT_ERRORS := 1
+# NOTE (checked against OrangeFox/bootable/Recovery fox_14.1 +
+# OrangeFox/vendor/recovery main): `OF_IGNORE_LOGICAL_MOUNT_ERRORS` is *not* a
+# variable OrangeFox reads.  It came from the kotah81 venus reference, whose
+# vendorsetup.sh exported it, but nothing consumes it in fox_14.1.
+# OrangeFox already tolerates absent logical partitions on its own.
+# (The crypto-related `OF_FBE_METADATA_MOUNT_IGNORE` does exist and belongs to
+#  phase 2 -- see docs/PHASE2-CRYPTO.md.)
 
 # Use magiskboot for all boot image patching (A/B + header v3 safety).
 OF_USE_MAGISKBOOT_FOR_ALL_PATCHES := 1
@@ -77,6 +80,10 @@ OF_DONT_KEEP_LOG_HISTORY := 1
 endif
 
 # ---------------------------------------------------------------------------
-# Phase 1: no haptics (see BoardConfig.mk).
+# Phase 1: no haptics.
+#
+# The switch that actually exists is `TW_NO_HAPTICS` (read in
+# bootable/recovery/Android.mk as `ifeq ($(TW_NO_HAPTICS), true)` and compiled
+# into data.cpp), and it is set in BoardConfig.mk.
+# `OF_NO_HAPTICS` does not exist upstream -- deliberately not used here.
 # ---------------------------------------------------------------------------
-OF_NO_HAPTICS := 1
