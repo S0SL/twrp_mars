@@ -104,3 +104,36 @@ Once the tarball exists:
    modules when the recovery runs on a ROM kernel (the OrangeFox installer
    path). See [../RAMDISK-MODULES.md](../RAMDISK-MODULES.md) §3.1 and the
    warning in the top-level README.
+
+`scripts/fetch-modules.sh` in this repository already implements step 1–3
+(`--stage-into recovery/root/lib/modules` is the default; it refuses to create
+either load list). It is not called from CI yet, so nothing changes until the
+kernel release exists. The workflow change is then two lines:
+
+```yaml
+      - name: Fetch matching kernel modules
+        run: |
+          set -euo pipefail
+          ./scripts/fetch-kernel.sh "$KERNEL_URL" prebuilt/Image
+          ./scripts/fetch-modules.sh "$MODULES_URL"          # stages into recovery/root/lib/modules
+
+      - name: Install device tree into device/xiaomi/mars
+        # unchanged: rsync copies recovery/root/lib/modules/ into the build tree
+```
+
+The `depmod` indexes come from the tarball itself (the kernel's
+`ci/package-modules.sh` runs `modules_install`, which invokes `depmod`), so the
+recovery CI does not need `depmod` — but if the tarball is ever repacked by
+hand, generate them with `depmod -b <staging> <kver>` before staging.
+
+## Two failure modes worth stating out loud
+
+* **Never add `modules.load.recovery`.** First-stage init `LOG(FATAL)`s on the
+  first module it cannot load, so a list that is wrong for whichever kernel is
+  running bricks the boot — including the installer path, where the kernel is
+  the ROM's. This is the reason for the no-load-list design above.
+* **Never ship modules from a different build.** `CONFIG_LOCALVERSION_AUTO=y`
+  puts the build commit into `vermagic`, so `Image` and `kernel-modules-*.tar.gz`
+  must always be downloaded from the same kernel release, and
+  `fetch-modules.sh` checks exactly that.
+
