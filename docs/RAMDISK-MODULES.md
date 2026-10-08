@@ -35,6 +35,35 @@ For the cross-ROM goal (HyperOS 2 *and* LineageOS 23.2 on one recovery image)
 that assumption does not hold: the MIUI/HyperOS modules and the LineageOS
 modules come from different kernel builds than our prebuilt `Image`.
 
+### 1.1 Measured: the ROM's modules can never load into our `Image`
+
+This is no longer a suspicion — the version strings say it outright. Both
+kernels are built with `CONFIG_LOCALVERSION="-qgki"` and
+`CONFIG_LOCALVERSION_AUTO=y`, so `git describe`'s hash is baked into
+`UTS_RELEASE` and therefore into every module's `vermagic`:
+
+```
+LineageOS 23.2 stock kernel (boot-stock-LOS23.2-20260930.img):
+    Linux version 5.4.302-qgki-g7ede20c8692e (root@d0150c16e15f) … Wed Sep 30 04:41:52 UTC 2026
+our BakaSU Image (S0SL/android_kernel_xiaomi_sm8350 HEAD 797c093f5):
+    Linux version 5.4.302-qgki-g797c093f5b52 (runner@runnervma94yk) … Tue Oct  6 23:38:59 UTC 2026
+```
+
+Also `CONFIG_MODVERSIONS=y` and `# CONFIG_MODULE_FORCE_LOAD is not set` in the
+generated `.config`, and the kernel releases ship **no** modules at all — the
+AnyKernel3 zip only contains an empty `modules/system/lib/modules/placeholder`.
+
+Consequences:
+
+* `TW_LOAD_VENDOR_MODULES` (the ROM's modules) can only work when the recovery
+  runs on **the ROM's own kernel**, i.e. when OrangeFox's installer patches the
+  recovery ramdisk into the ROM's `boot.img`. It can never work on our
+  prebuilt `Image`, whatever the ROM is.
+* For `fastboot boot` / flashing our `boot.img`, the only modules that can load
+  are ones built **in the same kernel build as that `Image`** — the kernel
+  repository has to produce them (§5).
+
+
 ## 2. What actually consumes `/lib/modules` at runtime
 
 Two independent loaders run in a recovery-as-boot ramdisk. Both were read from
@@ -236,19 +265,62 @@ Four practical consequences:
    `external/kmod`), so module **order/dependencies do not have to be
    hand-maintained**.
 
-### 3.1 Proposed change to this tree (guarded, no-op today)
+### 3.1 Which shipping mode to use — and why the load lists must stay absent
 
-`BoardConfig.mk`, next to the `TARGET_PREBUILT_KERNEL` block:
+There are two ways the recovery can end up running, and they must both survive
+the same artifact:
+
+| mode | kernel in use | module vermagic that will load |
+| --- | --- | --- |
+| `fastboot boot boot.img` (or flashing our `boot.img`) | **ours** (the prebuilt Image) | only modules built in the **same kernel build** as that Image |
+| the OrangeFox installer zip patched into a ROM's `boot.img` (how a recovery-as-boot device is normally installed) | **the ROM's** (e.g. LineageOS `…-g7ede20c8692e`, HyperOS stock) | only that ROM's `/vendor/lib/modules` |
+
+That second row is the whole point of the project ("one recovery, both ROMs"),
+so a ramdisk that force-loads *our* modules would break the mode that matters
+most: on a ROM kernel, first-stage init's `modules.load.recovery` would fail for
+modules whose vermagic was built for a different kernel — and that is a
+`LOG(FATAL)`, i.e. no boot at all (§2.1).
+
+**Recommended shipping mode: modules present in the ramdisk, load lists
+absent.** Copy the `.ko` files (plus `depmod` output) into
+`recovery/root/lib/modules/`, which lands them at `/lib/modules` in the
+recovery ramdisk:
+
+* first-stage init finds no `modules.load.recovery` **and** no `modules.load`
+  in that directory, so it loads nothing and cannot fail;
+* TWRP's own loader tries `/lib/modules` **first** (§2.2), resolves
+  dependencies from the `modules.dep` we ship, and — crucially — **tolerates
+  failures**: `Try_And_Load_Modules()` ignores `LoadListedModules()`'s return
+  value, and if fewer modules than requested loaded it moves on to the next
+  directory, i.e. the mounted ROM's `/vendor/lib/modules`. On our own kernel
+  the ramdisk modules load; on a ROM kernel they fail quietly and the ROM's own
+  matching modules load instead. Same artifact, both paths.
 
 ```make
-# ---------------------------------------------------------------------------
-# Prebuilt kernel modules shipped inside the recovery ramdisk.
-#
-# Empty until prebuilt/modules/*.ko exists (produced by
-# S0SL/android_kernel_xiaomi_sm8350: `MAKE_TARGET="Image modules"`).  The guard
-# is deliberate: with no modules the block is a no-op, so this can land before
-# the kernel release does.
-# ---------------------------------------------------------------------------
+# device.mk / BoardConfig.mk -- NOTE: no *_KERNEL_MODULES_LOAD anywhere.
+# recovery/root/lib/modules/ is copied verbatim into the recovery ramdisk
+# (build/make/core/Makefile, recovery_root_private).
+```
+
+`depmod` output is produced in CI (system `depmod -b <staging> <release>`), not
+by the AOSP kernel-module machinery, because that machinery is exactly what
+would write the fatal load lists.
+
+**Why not `BOARD_VENDOR_RAMDISK_KERNEL_MODULES := …` + `…_LOAD := false`?**
+Verified against `core/Makefile`: `false` is only understood by
+`build-image-kernel-modules-dir` for `BOARD_<part>_KERNEL_MODULES_LOAD`. The
+recovery-as-boot load file is written by `build-recovery-as-boot-load` from
+`BOARD_GENERIC_RAMDISK_KERNEL_MODULES_LOAD`, which would receive the literal
+string `false` (`module-load-list-copy-paths` writes `notdir` of it) — the
+ramdisk would then get a `modules.load` containing the single line `false`, and
+init would fail to load a module called `false`. The AOSP variable route is
+therefore only correct when the kernel is guaranteed to be ours.
+
+<details>
+<summary>Strict variant, if a future artifact is guaranteed to run on our own
+kernel only (kept for reference; not recommended)</summary>
+
+```make
 MODULES_DIR := $(DEVICE_PATH)/prebuilt/modules
 RECOVERY_KO := $(wildcard $(MODULES_DIR)/*.ko)
 ifneq ($(RECOVERY_KO),)
@@ -257,18 +329,17 @@ ifneq ($(RECOVERY_KO),)
 endif
 ```
 
-plus `prebuilt/modules/` in `.gitignore` (like `prebuilt/Image`), a
-`scripts/fetch-modules.sh` (same shape as `fetch-kernel.sh`: download, verify
-`*.ko` count and `vermagic`, unpack into `prebuilt/modules/`), and
-`TW_LOAD_VENDOR_MODULES` extended with `msm_drm.ko` so the display module is
-also loadable from the ROM's `/vendor` as a fallback.
+This installs into `TARGET_RECOVERY_ROOT_OUT/lib/modules` with a build-time
+`depmod` and generates `modules.load` / `modules.load.recovery` — correct, but
+it hard-codes "the kernel is ours". The load list must then be derived from the
+file set (`$(notdir $(wildcard …))`) so that no listed module is missing.
+</details>
 
-Optional alternative (no build-system involvement at all): copy the `.ko`
-files into `recovery/root/lib/modules/` — plain ramdisk files. TWRP's loader
-finds them (`/lib/modules` is its first candidate), but there is **no
-`depmod`**, so dependency order has to be hand-written in
-`TW_LOAD_VENDOR_MODULES`, and AOSP init gets no `modules.load.recovery`. Use
-this only as a stop-gap for one or two modules.
+The remaining pieces are the same in both modes: `prebuilt/modules/` in
+`.gitignore` (like `prebuilt/Image`), a `scripts/fetch-modules.sh` (same shape
+as `fetch-kernel.sh`: download, verify the `.ko` count and the `vermagic`
+string, unpack into `prebuilt/modules/`), and `TW_LOAD_VENDOR_MODULES` extended
+with `msm_drm.ko` (done, see §4.3).
 
 ## 4. Which modules to build — and the blocker in the current config
 
@@ -371,51 +442,86 @@ up in recovery.
 `adsp_loader_dlkm.ko`, `apr_dlkm.ko`, `q6_notifier_dlkm.ko`,
 `q6_pdr_dlkm.ko`, `snd_event_dlkm.ko` (audio DLKMs used by TWRP's audio/ADSP
 paths), `hwid.ko` (`CONFIG_MI_HARDWARE_ID=m`,
-`arch/arm64/configs/vendor/xiaomi_QGKI.config:17`),
-`mmhardware_sysfs_dlkm.ko` and `qti_battery_charger_main.ko`
-(`CONFIG_QTI_BATTERY_CHARGER=m` in both fragments — note the module *file name*
-is `qti_battery_charger.ko`, see the caveat in §6). The authoritative way to
-settle the exact file names is to run the build and list what it produced; do
-not extend this list by guessing.
+`arch/arm64/configs/vendor/xiaomi_QGKI.config:17`, built by
+`drivers/misc/Makefile:68` → `hwid.o`), `mmhardware_sysfs_dlkm.ko` and
+`qti_battery_charger_main.ko` (`CONFIG_QTI_BATTERY_CHARGER=m` in both
+fragments; the file name is resolved: `drivers/power/supply/Makefile:95` →
+`obj-$(CONFIG_QTI_BATTERY_CHARGER) += qti_battery_charger_main.o`, **not**
+`qti_battery_charger.ko` — that wrong name was in `device.mk` until this
+work). `device.mk` now carries exactly LineageOS' eleven-name list.
+
+The authoritative way to settle any remaining name is to run the build and list
+what it produced; do not extend this list by guessing.
 
 ## 5. The kernel-side work (needs user approval — NOT done)
 
-In `S0SL/android_kernel_xiaomi_sm8350`, in one commit:
+### 5.1 The minimal change, and its measured side effects
+
+Only **two config symbols** have to change, and they can be changed by a new
+two-line fragment instead of pulling in all of `vendor/star_QGKI.config`:
+
+```
+# arch/arm64/configs/vendor/mars_recovery_touch.config   (new)
+CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI=m
+CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE=m
+```
 
 ```sh
 # ci/build-kernel.sh
 FRAGMENTS=(
 	"vendor/debugfs.config"
 	"vendor/xiaomi_QGKI.config"
-	"vendor/star_QGKI.config"      # mars/star/venus touch: fts + xiaomi_touchfeature
+	"vendor/mars_recovery_touch.config"   # NEW
 )
 MAKE_TARGET="${MAKE_TARGET:-Image modules}"   # was: Image
 ```
 
-then package the modules next to the existing release assets:
+A dry run of exactly this merge chain (base `vendor/lahaina-qgki_defconfig`,
+then `debugfs` + `xiaomi_QGKI`, then the new fragment, `olddefconfig` after
+each step — the same sequence `ci/build-kernel.sh` performs, run with `O=/tmp`
+so nothing in the kernel tree is modified) gives a **full diff of the resulting
+`.config` containing nothing but those two lines**:
+
+```diff
+-# CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI is not set
++CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI=m
+-# CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE is not set
++CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE=m
+```
+
+So there is **no side effect on the built-in kernel**: no `=y` symbol changes,
+no `select` is triggered (both Kconfig entries are plain `tristate` with
+`depends on I2C` / `depends on INPUT_TOUCHSCREEN`, already satisfied), and the
+produced `Image` only gains two loadable `.ko` files that the current
+configuration does not build at all. The drivers currently come from the ROM's
+`/vendor/lib/modules`; making them `=m` in our build simply means our build
+produces them too.
+
+### 5.2 Packaging (one commit in the kernel repository)
 
 ```sh
 # after: MAKE_TARGET="Image modules" ./ci/build-kernel.sh
-# (out/ is the O= dir; modules land next to their objects)
-find out -name '*.ko' -print | wc -l                     # sanity: non-zero
-find out -name '*.ko' -exec install -Dm644 {} modules/{} \;
-# the ramdisk only needs the flat basenames, but keeping the tree + a
-# modules.dep makes the dependency audit possible:
-make -C . O=out ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- \
+grep -E 'TOUCHSCREEN_ST_FTS_V521_SPI|TOUCHSCREEN_XIAOMI_TOUCHFEATURE' out/.config
+#   both must be =m
+find out -name '*.ko' | wc -l                             # sanity: non-zero
+make -C "$ROOT" O="$OUT" ARCH=arm64 LLVM=1 CROSS_COMPILE=aarch64-linux-gnu- \
      INSTALL_MOD_PATH="$PWD/modules_root" modules_install
+# flat basenames are what the ramdisk wants; keep modules.dep for dependencies:
 tar -C modules_root/lib/modules -czf dist/kernel-modules-<tag>.tar.gz .
 ```
 
-The three touch symbols can be verified without a full build:
+`Image` and the module tarball must come from **the same commit and the same
+build**: `CONFIG_LOCALVERSION_AUTO=y` puts the commit hash into `vermagic`
+(§1.1), so a tarball from another commit can never be loaded into this `Image`.
 
-```sh
-grep -E 'TOUCHSCREEN_ST_FTS_V521_SPI|TOUCHSCREEN_XIAOMI_TOUCHFEATURE' out/.config
-# both must be =m
-```
+`ci/package-anykernel.sh` already creates the empty
+`modules/system/lib/modules/placeholder` in the AnyKernel3 zip; the modules
+tarball is a *separate* release asset, because the ramdisk, not the ROM's
+vendor partition, is where the recovery consumes them.
 
-Both touch symbols are `tristate` and depend only on `I2C` /
-`INPUT_TOUCHSCREEN` (see their `Kconfig` entries), so enabling them is a
-one-line-per-symbol change with no dependency work.
+A ready-to-apply patch (new fragment + `ci/build-kernel.sh` + a
+`ci/package-modules.sh` + the workflow step that uploads the tarball) lives in
+[`kernel-prep/`](kernel-prep/README.md). It has **not** been pushed anywhere.
 
 ## 6. Verification checklist (before this device tree is wired up)
 
@@ -452,5 +558,6 @@ one-line-per-symbol change with no dependency work.
 | R1b | **Worst case of this whole plan: `modules.load.recovery` makes first-stage init `LOG(FATAL)` when any listed module cannot be loaded (§2.1), so a single wrong/mismatched `.ko` turns "no touch" into "does not boot".** | Derive the list from the shipped `.ko` set, build modules in the same run as the `Image`, verify the `vermagic` string, and keep `modules.blocklist` as the escape hatch. Keep the *old* recovery image flashable (a bad recovery-as-boot image can be replaced with `fastboot flash boot`). |
 | R2 | `prebuilt/modules/*.ko` are GPL kernel modules inside this repo — fine to vendor, but they inflate the tree. | Keep them `.gitignore`d and fetch them in CI, exactly like `prebuilt/Image`. |
 | R3 | Ramdisk size: the modules plus `depmod`-generated indexes add a few MB; `boot` is 192 MiB and `OF_USE_LZMA_COMPRESSION=1` already handles the fox ramdisk. | Watch the `boot.img` size in the CI log; drop unused modules from the list. |
-| R4 | Module file names in the `device.mk` list are not all confirmed for this kernel (`qti_battery_charger.ko` vs `qti_battery_charger_main.ko`). | Derive the load list from the built files (`$(notdir $(wildcard ...))`) and copy the real names into `TW_LOAD_VENDOR_MODULES`. |
-| R5 | Loading a module twice (init from `modules.load.recovery`, then TWRP from `/lib/modules`) is harmless: TWRP de-duplicates against `/proc/modules` before insmod'ing. | none needed |
+| R4 | ~~Module file names in the `device.mk` list are not confirmed~~ **resolved**: `qti_battery_charger_main.ko` (`drivers/power/supply/Makefile:95`), `hwid.ko` (`drivers/misc/Makefile:68`), `xiaomi_touch.ko`/`fts_touch_spi.ko` (their own `Makefile:2`); `device.mk` now matches LineageOS' eleven-name list. | If a future kernel renames one, TWRP skips names it does not find — but the module then is not loaded, so re-check against the built set. |
+| R5 | Loading a module twice (TWRP from `/lib/modules`, then from the ROM's `/vendor/lib/modules`) is harmless: TWRP de-duplicates against `/proc/modules` before insmod'ing, and falls through to the next directory when fewer modules loaded than requested. | none needed |
+| R6 | **The installer path is the one that must not break**: OrangeFox installs the recovery by patching the ramdisk into the *ROM's* `boot.img`, so the running kernel is the ROM's — modules built for our `Image` fail there. If they were force-loaded by first-stage init, the result would be no boot (R1b). | This is why §3.1 ships the modules **without** `modules.load`/`modules.load.recovery`: init loads nothing, TWRP loads tolerantly and falls through to the ROM's own modules. |

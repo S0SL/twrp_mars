@@ -68,14 +68,40 @@ endif
 # Kernel modules loaded at recovery runtime
 #
 # The kernel is prebuilt (TARGET_PREBUILT_KERNEL), so no .ko is compiled here.
-# TWRP therefore insmods the touch driver straight out of the *installed ROM's*
-# /vendor/lib/modules.  Names taken from
-#   OrangeFox_device_xiaomi_sm8350-common (kotah81, tiramisu).
+# TWRP therefore insmods them straight out of the *installed ROM's*
+# /vendor/lib/modules -- after mounting /vendor, and *before* gui_init()
+# (twrp.cpp:539 `PartitionManager.Process_Fstab()` -> partitionmanager.cpp:500
+# `KernelModuleLoader::Load_Vendor_Modules()`, vs twrp.cpp:549 `gui_init()`).
 #
-# KNOWN LIMITATION: this only works when the ROM's modules were built against
-# the same kernel (CONFIG_MODVERSIONS / vermagic).  See docs/KNOWN_ISSUES.md.
+# This list is LineageOS' own mars recovery list
+# (android_device_xiaomi_mars, BoardConfig.mk: `BOOT_KERNEL_MODULES`), with the
+# file names verified against this kernel's Makefiles:
+#   fts_touch_spi.ko              drivers/input/touchscreen/fts_spi/Makefile:2
+#                                 (CONFIG_TOUCHSCREEN_ST_FTS_V521_SPI, =m in star_QGKI)
+#   xiaomi_touch.ko               drivers/input/touchscreen/xiaomi/Makefile:2
+#                                 (CONFIG_TOUCHSCREEN_XIAOMI_TOUCHFEATURE, =m in star_QGKI)
+#   hwid.ko                       drivers/misc/Makefile:68            (CONFIG_MI_HARDWARE_ID=m)
+#   qti_battery_charger_main.ko   drivers/power/supply/Makefile:95    (CONFIG_QTI_BATTERY_CHARGER=m)
+#   msm_drm.ko                    techpack/display/msm/Makefile:165   (CONFIG_DISPLAY_BUILD=m)
+#   adsp_loader_dlkm / apr_dlkm / q6_notifier_dlkm / q6_pdr_dlkm /
+#   snd_event_dlkm                audio DLKMs used by the recovery ADSP path
+#   mmhardware_sysfs_dlkm.ko      Mi hardware sysfs nodes
+#
+# NOTE `qti_battery_charger.ko` was in the previous version of this list and
+# does not exist in this kernel -- the module is `qti_battery_charger_main.ko`.
+# TWRP only insmods names it actually finds, so a wrong name is harmless, but it
+# means "the battery/charger module is not loaded" while looking like it is.
+#
+# `msm_drm.ko` matters more than it looks: display is a *module* for lahaina
+# (CONFIG_DISPLAY_BUILD=m), so this is the only path by which the panel comes up
+# in this build.  If it does not load, the recovery has no display at all -- see
+# docs/RAMDISK-MODULES.md for shipping our own copy in the ramdisk instead.
+#
+# KNOWN LIMITATION: loading the ROM's modules only works when they were built
+# against the same kernel (CONFIG_MODVERSIONS symbol CRCs / vermagic).  See
+# docs/KNOWN_ISSUES.md I7 and docs/RAMDISK-MODULES.md.
 # ---------------------------------------------------------------------------
-TW_LOAD_VENDOR_MODULES := "xiaomi_touch.ko fts_touch_spi.ko fts_touch_spi_k2.ko focaltech_touch.ko adsp_loader_dlkm.ko qti_battery_charger.ko"
+TW_LOAD_VENDOR_MODULES := "xiaomi_touch.ko fts_touch_spi.ko msm_drm.ko hwid.ko mmhardware_sysfs_dlkm.ko qti_battery_charger_main.ko adsp_loader_dlkm.ko apr_dlkm.ko q6_notifier_dlkm.ko q6_pdr_dlkm.ko snd_event_dlkm.ko"
 
 # ---------------------------------------------------------------------------
 # Touch panel firmware

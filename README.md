@@ -221,11 +221,22 @@ deliberately **not** set.
    the kernel (`CONFIG_MODVERSIONS` / vermagic) — which is exactly why
    cross-ROM (HyperOS 2 ↔ LineageOS 23.2) flashing is the riskiest goal.
    Building and embedding the modules is the fix; see
-   [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
-3. **No haptics** in phase 1 (`TW_NO_HAPTICS := true`), to avoid pulling in the
+   [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md).
+3. **⚠ Never ship a `modules.load.recovery` (or `modules.load`) inside the
+   recovery ramdisk that lists more modules than are actually present and
+   loadable.** In recovery mode AOSP's first-stage init
+   (`system/core/init/first_stage_init.cpp`) prefers `modules.load.recovery`,
+   and `libmodprobe` returning `false` for a single module makes init
+   `LOG(FATAL) << "Failed to load kernel modules"` — the image then does not
+   boot at all. TWRP's own loader tolerates failures; init's does not.
+   Concretely: derive any load list from the packaged `.ko` set, and prefer the
+   no-load-list design in [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md)
+   §3.1, which also keeps the OrangeFox-installer path (recovery running on the
+   *ROM's* kernel) working.
+4. **No haptics** in phase 1 (`TW_NO_HAPTICS := true`), to avoid pulling in the
    sm8350 AIDL vibrator HAL.
-4. **No crypto**: `/data` will show as unencrypted-but-unmountable. By design.
-5. `.repo` cache save is best-effort; GitHub's 10 GB per-repo cache limit may
+5. **No crypto**: `/data` will show as unencrypted-but-unmountable. By design.
+6. `.repo` cache save is best-effort; GitHub's 10 GB per-repo cache limit may
    reject it.
 
 Full list and the risk table: [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
@@ -240,4 +251,7 @@ Full list and the risk table: [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
   same-named files, and the crypto-relevant differences.
 * [docs/PHASE2-CRYPTO.md](docs/PHASE2-CRYPTO.md) — what phase 2 has to solve.
 * [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md) — risks and open questions.
+* [docs/RAMDISK-MODULES.md](docs/RAMDISK-MODULES.md) — plan for building the
+  touch/display `.ko` into the recovery ramdisk (I7/I11), with the kernel-side
+  patch prepared in [docs/kernel-prep/](docs/kernel-prep/README.md).
 * [docs/BUILD-STATUS.md](docs/BUILD-STATUS.md) — CI run history.

@@ -200,49 +200,43 @@ now prints the discovery list. If the list has no mars entry, the next fix is to
 make the tree visible to Soong (and `COMMON_LUNCH_CHOICES` would then also have
 raised "contains products(s) not defined in this file" — worth watching for).
 
-## Run 6
+## Run 6 — in flight when the build container lost network
 
-| field | value |
+Run: <https://github.com/S0SL/twrp_mars/actions/runs/37773718753> (commit `dbe3283`)
+
+| step | outcome |
 | --- | --- |
-| trigger | push of the `ap2a` fix + verbose lunch probe |
-| caches | warm (sync ~10–19 min) |
-| what it will prove | whether the product is discovered; if so, the first real compile starts |
+| 1–7 | ✅ |
+| 8 Sync OrangeFox fox_14.1 | ✅ |
+| 9 Save prebuilts cache | ✅ |
+| 10 Save .repo cache | ✅ (per the 12:12:51 poll) |
+| 11–13 | not observed: **this container lost all network access at ~12:17 UTC** (`curl https://api.github.com` → `000`, `example.com` → `000`), so the run could not be polled any further |
 
-### What to look at if run 5 fails
+**Please check the run page directly.** The interesting output is at the
+`Build recoveryimage` step: it now prints, before attempting any lunch combo,
 
-| symptom | likely cause | action |
-| --- | --- | --- |
-| `No space left on device` | I1 in `KNOWN_ISSUES.md` | re-run with `runner: ubuntu-latest-4-cores` |
-| `repo init` / `repo sync` failure | upstream manifest or network flake | re-run; the sync is `--force-sync` and resumable |
-| `Failed to patch the twrp-14 minimal manifest` | upstream `build/make` moved and the OrangeFox patch no longer applies | bump the `OrangeFox/sync` clone (it applies the same patches) |
-| missing `libdisplayconfig.qti` / `vendor.display.config@*` | no CAF display project in the manifest | already guarded (I16); supply the `.so` files as prebuilts if the display stays dark |
-| `vendor/recovery/OrangeFox_A14.sh` aborts with `abort 100` | build system not patched (wrong sync route) | verify `scripts/fox-sync.sh` was used, never `repo init -b fox_14.1` |
-| any valid combo is rejected | release token renamed upstream | add candidates to the probe list in the workflow |
+* the line count of `out/.module_paths/AndroidProducts.mk.list` and any
+  `xiaomi`/`mars` entry in it,
+* a listing of `device/xiaomi/mars/`,
+* the tail of every failed `lunch twrp_mars-<release>-eng` attempt,
 
-### Aborted attempts before run 1
+with `ap2a` tried first. That answers the one open question: whether
+`** Don't have a product spec for: 'twrp_mars'` was merely fallout from the wrong
+release token, or whether the device tree is not being discovered at all.
 
-Two runs were started at 10:07 UTC and both ended `cancelled`, because a
-`workflow_dispatch` run and a `push` run share the concurrency group
-(`${{ github.workflow }}-${{ github.ref }}`) and `cancel-in-progress: true`
-made them kill each other. Cancelling the loser left neither running.
+### If the product is confirmed missing
 
-Consequences, both applied:
+Then `core/product_config.mk` is not reading this tree, because
+`android_products_makefiles` only contains
+`$(file <$(OUT_DIR)/.module_paths/AndroidProducts.mk.list)` — a list produced by
+Soong's finder. Next things to try, in order:
 
-* `concurrency.cancel-in-progress` is now **`false`**: for a ~2 hour build it is
-  much better for a new push to queue behind the running build than to silently
-  destroy it. GitHub keeps only the newest pending run per group, so repeated
-  pushes do not pile up.
-* **Do not push while a build is running** unless you intend to queue another
-  one, and use `[skip ci]` in the commit message for documentation-only fixes
-  (`docs/**` and `**.md` are already in `paths-ignore`).
+1. run `mka` once with `--dumpvars-mode` / check whether the finder prunes
+   `device/` in this manifest;
+2. compare against a device tree known to build on fox_14.1
+   (`OrangeFox/device/mondrian` on fox_16.0, or any fox_14.1 tree) to see whether
+   something else registers the product;
+3. as a fallback, set `TARGET_PRODUCT`/`TARGET_RELEASE`/`TARGET_BUILD_VARIANT`
+   explicitly instead of relying on `lunch` — but `lunch` is the documented
+   interface, so this is a workaround, not a fix.
 
-### What to look at if it fails
-
-| symptom | likely cause | action |
-| --- | --- | --- |
-| `No space left on device` during sync or build | I1 in `KNOWN_ISSUES.md` | re-run with `runner: ubuntu-latest-4-cores` (or any 150 GB runner) |
-| `repo init` / `repo sync` failure | upstream manifest or network flake | re-run; the sync is `--force-sync` and resumable |
-| `Failed to patch the twrp-14 minimal manifest` | upstream `build/make` moved; the OrangeFox patch no longer applies | bump to a newer `master` of `OrangeFox/sync` (it applies the same patches) |
-| `error: ... not found` for `libdisplayconfig.qti` / `vendor.display.config@*` | manifest does not build those from source | add the missing project to the sync, or drop those entries from `TARGET_RECOVERY_DEVICE_MODULES` |
-| build fails inside `vendor/recovery/OrangeFox_A14.sh` with `abort 100` | the build system was not patched (wrong sync route) | verify `scripts/fox-sync.sh` was used — not `repo init -b fox_14.1` |
-| `lunch: twrp_mars-eng not found` | device tree not in `device/xiaomi/mars` | check the "Install device tree" step log |
