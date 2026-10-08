@@ -29,9 +29,19 @@ PRODUCT_SOONG_NAMESPACES += \
 # ---------------------------------------------------------------------------
 # Display libraries required by TWRP's minuitwrp / gralloc path.
 #   source: OrangeFox_device_xiaomi_sm8350-common (kotah81) and
-#           OrangeFox/device/vayu (fox_14.1).  All of these are built from
-#           source inside the fox_14.1 manifest, so no prebuilt blobs are
-#           needed for them.
+#           OrangeFox/device/vayu (fox_14.1).
+#
+# libion is AOSP (system/core/libion) and is always buildable.
+# libdisplayconfig.qti / vendor.display.config@* are *CAF* projects living in
+# vendor/qcom/opensource/commonsys-intf/display -- which the fox_14.1 manifest
+# (nebrassy platform_manifest_twrp_aosp, branch twrp-14) does NOT contain.
+# Verified: that manifest lists 1357 projects and none is under vendor/qcom.
+#
+# Copying a source file that is never built is a hard install error, so these
+# are only referenced when the project is really present.  If it is absent the
+# recovery has to rely on prebuilt blobs under recovery/root/vendor/lib64/,
+# which is how OrangeFox/device/vayu ships them.
+# See docs/KNOWN_ISSUES.md I16.
 # ---------------------------------------------------------------------------
 TARGET_RECOVERY_DEVICE_MODULES += \
     libdisplayconfig.qti \
@@ -40,10 +50,19 @@ TARGET_RECOVERY_DEVICE_MODULES += \
     vendor.display.config@2.0
 
 RECOVERY_LIBRARY_SOURCE_FILES += \
-    $(TARGET_OUT_SHARED_LIBRARIES)/libion.so \
+    $(TARGET_OUT_SHARED_LIBRARIES)/libion.so
+
+ifneq ($(wildcard vendor/qcom/opensource/commonsys-intf/display),)
+RECOVERY_LIBRARY_SOURCE_FILES += \
     $(TARGET_OUT_SYSTEM_EXT_SHARED_LIBRARIES)/libdisplayconfig.qti.so \
     $(TARGET_OUT_SYSTEM_EXT_SHARED_LIBRARIES)/vendor.display.config@1.0.so \
     $(TARGET_OUT_SYSTEM_EXT_SHARED_LIBRARIES)/vendor.display.config@2.0.so
+else
+$(warning device/xiaomi/mars: vendor/qcom/opensource/commonsys-intf/display is not in the manifest)
+$(warning   -> libdisplayconfig.qti / vendor.display.config@* will NOT be built into recovery)
+$(warning   -> If the display does not come up, extract them from a mars ROM into)
+$(warning      recovery/root/vendor/lib64/ (see docs/KNOWN_ISSUES.md I16))
+endif
 
 # ---------------------------------------------------------------------------
 # Kernel modules loaded at recovery runtime
