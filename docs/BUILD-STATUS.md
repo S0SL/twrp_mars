@@ -240,3 +240,18 @@ Soong's finder. Next things to try, in order:
    explicitly instead of relying on `lunch` — but `lunch` is the documented
    interface, so this is a workaround, not a fix.
 
+
+## Offline work while runs 6/7 could not be polled (12:17 UTC onwards)
+
+The build container lost all outbound network access at ~12:17 UTC, so CI could
+not be polled. The following was prepared locally in that window; none of it
+changes what CI builds until the kernel-side release exists.
+
+| item | evidence |
+| --- | --- |
+| `TW_LOAD_VENDOR_MODULES` corrected to LineageOS' eleven-name mars list, `msm_drm.ko` added | every name resolved in this kernel's Makefiles: `qti_battery_charger_main.ko` (`drivers/power/supply/Makefile:95`), `hwid.ko` (`drivers/misc/Makefile:68`), `xiaomi_touch.ko` / `fts_touch_spi.ko` (their `Makefile:2`); display is a module for lahaina (`techpack/display/config/gki_lahainadisp.conf:12`), and TWRP loads modules before `gui_init()` (`twrp.cpp:539` vs `:549`) |
+| Measured: the ROM's modules can never load into our `Image` | `CONFIG_LOCALVERSION_AUTO=y` → stock LOS `…-g7ede20c8692e` vs our `…-g797c093f5b52`; `CONFIG_MODVERSIONS=y`; `MODULE_FORCE_LOAD` unset; the AnyKernel3 releases ship no modules |
+| Shipping design fixed: `.ko` + depmod output in `recovery/root/lib/modules`, **no** `modules.load*` | first-stage init `LOG(FATAL)`s on the first unloadable entry in `modules.load.recovery` (`first_stage_init.cpp` + `libmodprobe` `LoadListedModules`), which would break the OrangeFox-installer path; TWRP's loader tolerates failures and falls through to the ROM's modules |
+| Kernel change prepared, dry-run verified, **not pushed** | `docs/kernel-prep/`: `git apply --check` passes; applying it and running the config merge gives a full `.config` diff of exactly the two touch symbols; the kernel checkout was then reverted byte-clean |
+| Recovery-side fetch prepared, unused | `scripts/fetch-modules.sh` (verifies the three modules and the `vermagic` against `prebuilt/Image`, stages into `recovery/root/lib/modules`, refuses to write either load list) |
+| Artifact publication prepared | `scripts/publish-release.sh` (resolves the 302 to a signed URL before fetching, so the token never goes to `objects.githubusercontent.com`) |
