@@ -128,7 +128,18 @@ mkdir -p "$HOME_DIR/bin"
 # --depth=1 to projects it considers NEW, so a leftover directory silently turns
 # every retry into a full-history transfer (see docs/BUILD-STATUS.md, S2).
 repair_giants() {
-	local proj d
+	local proj d wt g attempt
+
+	# Note the two different paths: the object dir is keyed by the project
+	# *name* (platform/prebuilts/rust), the work git-dir by its *path*
+	# (prebuilts/rust).
+	clear_locks() {
+		find "$FOX_DIR/.repo/projects" -maxdepth 7 -name 'index.lock' -mmin +2 -delete 2>/dev/null
+		find "$FOX_DIR/.repo/projects" -maxdepth 7 -name 'shallow.lock' -mmin +2 -delete 2>/dev/null
+		find "$FOX_DIR/.repo/project-objects" -maxdepth 7 -name 'index.lock' -mmin +2 -delete 2>/dev/null
+	}
+
+	clear_locks
 	for proj in $GIANTS; do
 		d="$FOX_DIR/.repo/project-objects/$proj.git"
 		if [ -d "$d" ] && ! ls "$d"/objects/pack/pack-*.pack >/dev/null 2>&1; then
@@ -136,15 +147,33 @@ repair_giants() {
 			rm -rf "$d"
 		fi
 	done
+
 	# then try each giant on its own, shallow, with retries
 	for proj in $GIANTS; do
-		local attempt
+		# path inside the source tree: the platform/ prefix is stripped by convention
+		wt="$FOX_DIR/${proj#platform/}"
+		g="$FOX_DIR/.repo/projects/${proj#platform/}.git"
 		for attempt in 1 2 3 4 5 6; do
 			[ -d "$FOX_DIR/.repo" ] || return 0
 			say "targeted shallow sync of $proj (attempt $attempt)"
 			( cd "$FOX_DIR" && repo sync -j1 --force-sync -c --no-clone-bundle --no-tags "$proj" ) && break
 			say "  $proj attempt $attempt failed"
-			sleep 20
+			clear_locks
+			# A checkout interrupted mid-way leaves an index that disagrees with
+			# the working tree (thousands of staged deletions) and no later
+			# checkout can ever converge; start that project over instead.
+			if [ "$attempt" -ge 2 ]; then
+				case "$wt" in
+				"$FOX_DIR"/prebuilts/*)
+					say "  wiping the half-checked-out state of $proj (worktree + work git-dir)"
+					rm -rf "$wt" "$g"
+					;;
+				*)
+					say "  refusing to wipe $wt: unexpected path"
+					;;
+				esac
+			fi
+			sleep 15
 		done
 	done
 }
