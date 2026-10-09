@@ -550,3 +550,72 @@ swap **100 % used** and ~120 MB/s of swap traffic. An 8 GB `/swapfile-mars`
 (`fallocate` + `mkswap` + `swapon`, not in `/etc/fstab`) was added for headroom.
 It is non-destructive and removable with `swapoff /swapfile-mars`. Result: **zero
 OOM kills** throughout the compile.
+
+### S6 — our own tree set an OrangeFox-obsolete variable (`OF_AB_DEVICE`)
+
+Once Soong analysis finally completed, the build died in the **kati (legacy Make)**
+stage:
+
+```
+[ 95% 1031/1080] including bootable/recovery/Android.mk
+FAILED:
+In file included from bionic/tests/Android.mk:33:
+In file included from bootable/recovery/Android.mk:156:
+bootable/recovery/orangefox.mk:597: error: "OF_AB_DEVICE" is obsolete. Use "export FOX_AB_DEVICE=1" instead.
+18:05:55 ckati failed with: exit status 1
+```
+
+This is the same *class* as Cause 6 (`KATI_obsolete_var` hard errors), but the
+check lives in OrangeFox's own `orangefox.mk` — 12 names there raise
+`$(error ...)`. Our tree set `OF_AB_DEVICE := 1` in three places
+(`fox_mars.mk`, `device.mk`, `vendorsetup.sh`).
+
+`scripts/obsolete-build-vars.txt` now also lists the twelve OrangeFox names and
+`scripts/check-tree.sh` scans `vendorsetup.sh` as well (it previously looked at
+`.mk` files only, which is exactly where one of the three occurrences hid). A
+negative test confirms the validator fails on the old spelling and passes on the
+new one — so this class of bug now costs ten seconds instead of a 25-minute
+build.
+
+### S7 — the "obvious" rename then hits `AB_OTA_UPDATER`, which is `KATI_READONLY`
+
+Renaming to `FOX_AB_DEVICE` immediately produced a second kati stop:
+
+```
+bootable/recovery/orangefox.mk:170: error: cannot assign to readonly variable: AB_OTA_UPDATER
+```
+
+The relevant OrangeFox code is:
+
+```make
+167| ifeq ($(FOX_AB_DEVICE),1)
+168|     LOCAL_CFLAGS += -DFOX_AB_DEVICE='"1"'
+169|     ifneq ($(AB_OTA_UPDATER),true)
+170|         AB_OTA_UPDATER := true            <-- hard error
+```
+
+and `build/make/core/board_config.mk:923-924` does
+
+```make
+AB_OTA_UPDATER ?=
+.KATI_READONLY := TARGET_RECOVERY_UPDATER_LIBS AB_OTA_UPDATER
+```
+
+so any later assignment to it is fatal, whatever its value. The author's original
+combination — A/B flag on, `AB_OTA_UPDATER` unset (KNOWN_ISSUES I15) — **is no
+longer expressible**: `OF_AB_DEVICE` is rejected outright, and `FOX_AB_DEVICE`
+forces the assignment.
+
+Two ways out, recorded with their trade-offs:
+
+* **(chosen, first validation build)** leave the A/B flag off entirely
+  (`a8ad1e9`). The image still boots; A/B *mounting* still comes from the
+  `slotselect` flags in `recovery/root/system/etc/recovery.fstab`. What is lost is
+  OrangeFox's A/B awareness (`-DFOX_AB_DEVICE=1`) and `bootctl`, i.e. slot-aware
+  flashing in the UI.
+* **(the proper fix, for a later round)** declare the device A/B to the whole
+  build system by setting `AB_OTA_UPDATER := true` (plus `AB_OTA_PARTITIONS`)
+  early in `BoardConfig.mk`. That makes line 169 false, so line 170 never runs,
+  and the A/B flag comes back. It is a bigger semantic change and exactly what
+  KNOWN_ISSUES I15 warns about, so it deserves its own build round rather than
+  being smuggled into the first one.
