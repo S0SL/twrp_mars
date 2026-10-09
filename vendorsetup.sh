@@ -44,8 +44,9 @@ if [ "$1" = "$FDEVICE" -o "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
 	export FOX_USE_DATE_BINARY=1
 	export FOX_DELETE_AROMAFM=1
 
-	# A/B device, no recovery partition
-	export OF_AB_DEVICE=1
+	# A/B device, no recovery partition.
+	# Must be FOX_AB_DEVICE: OF_AB_DEVICE is a hard error in orangefox.mk:597.
+	export FOX_AB_DEVICE=1
 
 	# mars has no alternate SKU codename
 	export TARGET_DEVICE_ALT=""

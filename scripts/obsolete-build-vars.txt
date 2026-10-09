@@ -159,3 +159,26 @@ TARGET_ROOT_OUT_SBIN
 TARGET_ROOT_OUT_SBIN_UNSTRIPPED
 TARGET_TOOLCHAIN_ROOT
 USE_CLANG_PLATFORM_BUILD
+
+# ---------------------------------------------------------------------------
+# A second source of the same failure, found the hard way by the first server
+# build: OrangeFox's own bootable/recovery/orangefox.mk raises `$(error ...)`
+# for these names, which kati turns into a hard stop exactly like the
+# KATI_obsolete_var ones above.  The first server build died at the kati stage
+# with
+#     bootable/recovery/orangefox.mk:597: error: "OF_AB_DEVICE" is obsolete.
+#     Use "export FOX_AB_DEVICE=1" instead.
+# Regenerate with:
+#   grep -n 'is obsolete' bootable/recovery/orangefox.mk
+OF_VENDOR_BOOT_RECOVERY
+OF_VIRTUAL_AB_DEVICE
+OF_AB_DEVICE
+OF_PATCH_VBMETA_FLAG
+OF_VANILLA_BUILD
+OF_TARGET_DEVICES
+FOX_USE_LZMA_COMPRESSION
+FOX_ADVANCED_SECURITY
+FOX_USE_LZ4_COMPRESSION
+FOX_USE_DMCTL
+FOX_VERSION
+TW_INCLUDE_INJECTTWRP

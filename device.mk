@@ -150,7 +150,10 @@ OF_DONT_PATCH_ENCRYPTED_DEVICE := 1
 # ---------------------------------------------------------------------------
 # A/B device
 # ---------------------------------------------------------------------------
-OF_AB_DEVICE := 1
+# FOX_AB_DEVICE (not OF_AB_DEVICE): the OF_ spelling is a hard error in
+# OrangeFox's orangefox.mk:597.  vendor/recovery/OrangeFox_vendor.sh accepts
+# either spelling, so this stays compatible.
+FOX_AB_DEVICE := 1
 
 # OEM otacert for MIUI/Xiaomi OTA zips (provided by vendor/recovery).
 PRODUCT_EXTRA_RECOVERY_KEYS += \

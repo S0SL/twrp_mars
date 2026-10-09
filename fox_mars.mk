@@ -12,7 +12,11 @@
 # ---------------------------------------------------------------------------
 # Device flags
 # ---------------------------------------------------------------------------
-OF_AB_DEVICE := 1
+# NOTE: this must be FOX_AB_DEVICE, not OF_AB_DEVICE.  OrangeFox's
+# bootable/recovery/orangefox.mk:597 turns OF_AB_DEVICE into a hard error
+# (`$(error "OF_AB_DEVICE" is obsolete. Use "export FOX_AB_DEVICE=1" instead)`),
+# which is exactly what killed the first server build at the kati stage.
+FOX_AB_DEVICE := 1
 OF_USE_GREEN_LED := 0
 OF_NO_TREBLE_COMPATIBILITY_CHECK := 1
 OF_NO_MIUI_PATCH_WARNING := 1

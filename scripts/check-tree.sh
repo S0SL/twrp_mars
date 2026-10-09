@@ -205,7 +205,11 @@ fi
 # scripts/obsolete-build-vars.txt, extracted from the build/make fork fox_14.1
 # uses; its header says how to regenerate it.
 OBSOLETE_FILE=scripts/obsolete-build-vars.txt
-MK_FILES="BoardConfig.mk device.mk twrp_mars.mk fox_mars.mk AndroidProducts.mk Android.mk"
+# vendorsetup.sh is in the list because it exports build flags too: the first
+# server build was killed by `export OF_AB_DEVICE=1` in there (and in two .mk
+# files), which a scan of .mk files alone would have caught -- keeping it in the
+# list means this whole class fails the local check instead of a 25-minute build.
+MK_FILES="BoardConfig.mk device.mk twrp_mars.mk fox_mars.mk AndroidProducts.mk Android.mk vendorsetup.sh"
 if [ -f "$OBSOLETE_FILE" ]; then
 	BADVARS=""
 	while IFS= read -r var; do
