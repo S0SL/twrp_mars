@@ -80,19 +80,74 @@ if [ "${MARS_DRY_RUN:-0}" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------- memory guard
+#
+# IMPORTANT DESIGN CONSTRAINTS (a first version of this got them wrong):
+#
+#  * SIGSTOP does NOT release memory.  So a guard that resumes only when
+#    MemAvailable climbs back above a high watermark can deadlock forever: the
+#    stopped process keeps holding its pages, the watermark is never reached and
+#    nobody ever sends SIGCONT.  Resume therefore happens on **whichever comes
+#    first**: memory recovering *or* a hard timeout.
+#  * Only network/fetch processes are ever stopped.  Never soong_build, ninja,
+#    mka, make, cc1plus or any shell in the build chain -- the pattern below
+#    matches git/repo networking only, and the guard additionally refuses to
+#    touch anything whose executable is a compiler or a build tool.
+#  * It logs a heartbeat, so the log can never look hung just because Soong's
+#    analysis phase prints nothing for an hour.
+#
+# MARS_MEM_GUARD=0 disables the whole thing (swap is the safer fallback).
 PAUSED=0
+PAUSED_SINCE=0
+GUARD_TICKS=0
+MEM_STOP_MAX="${MARS_MEM_STOP_MAX:-90}"
+HEARTBEAT_TICKS="${MARS_MEM_HEARTBEAT_S:-300}"
+
+guard_safe_to_stop() {
+	# never stop a build/compile process, whatever the pattern matched
+	case "$(cat "/proc/$1/comm" 2>/dev/null)" in
+	soong_build|soong_ui|ninja|nsjail|mka|make|cc1plus|cc1|gcc|g++|ld|clang*|javac|d8|r8|kotlinc*|bash|dash|sh|systemd|sshd)
+		return 1 ;;
+	esac
+	return 0
+}
+
+guard_stop() {
+	local p
+	for p in $(pgrep -f "$HEAVY" 2>/dev/null); do
+		[ "$p" = "$$" ] && continue
+		if guard_safe_to_stop "$p"; then kill -STOP "$p" 2>/dev/null; fi
+	done
+}
+
+guard_cont() {
+	local p
+	for p in $(pgrep -f "$HEAVY" 2>/dev/null); do
+		kill -CONT "$p" 2>/dev/null
+	done
+}
+
 mem_guard() {
+	[ "${MARS_MEM_GUARD:-1}" = 1 ] || { say "MEM GUARD disabled (MARS_MEM_GUARD=0)"; return 0; }
 	while :; do
-		local avail
+		local avail now
 		avail=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
+		now=$(date +%s)
 		if [ "$PAUSED" = 0 ] && [ "${avail:-0}" -lt "$MEM_LOW" ]; then
-			say "MEM GUARD: MemAvailable ${avail}MB < ${MEM_LOW}MB -- pausing fetches (SIGSTOP)"
-			pkill -STOP -f "$HEAVY" 2>/dev/null
+			say "MEM GUARD: MemAvailable ${avail}MB < ${MEM_LOW}MB -- pausing fetch/network processes (max ${MEM_STOP_MAX}s)"
+			guard_stop
 			PAUSED=1
-		elif [ "$PAUSED" = 1 ] && [ "${avail:-0}" -gt "$MEM_HIGH" ]; then
-			say "MEM GUARD: MemAvailable ${avail}MB > ${MEM_HIGH}MB -- resuming (SIGCONT)"
-			pkill -CONT -f "$HEAVY" 2>/dev/null
-			PAUSED=0
+			PAUSED_SINCE=$now
+		elif [ "$PAUSED" = 1 ]; then
+			if [ "${avail:-0}" -gt "$MEM_HIGH" ] || [ $((now - PAUSED_SINCE)) -ge "$MEM_STOP_MAX" ]; then
+				say "MEM GUARD: resuming after $((now - PAUSED_SINCE))s (MemAvailable ${avail}MB) -- SIGCONT"
+				guard_cont
+				PAUSED=0
+			fi
+		fi
+		GUARD_TICKS=$((GUARD_TICKS + 10))
+		if [ "$GUARD_TICKS" -ge "$HEARTBEAT_TICKS" ]; then
+			GUARD_TICKS=0
+			say "MEM GUARD alive: MemAvailable ${avail}MB, swap_free $(free -m | awk '/[Ss]wap|交换/{print $4}')MB, paused=$PAUSED, soong=$(pgrep -c -f 'soong_build' 2>/dev/null || echo 0) ninja=$(pgrep -c -f 'bin/ninja' 2>/dev/null || echo 0) cc1plus=$(pgrep -c cc1plus 2>/dev/null || echo 0) out=$(du -sh "$FOX_DIR/out" 2>/dev/null | cut -f1)"
 		fi
 		sleep 10
 	done
@@ -102,9 +157,9 @@ GUARD_PID=$!
 cleanup() {
 	kill "$GUARD_PID" 2>/dev/null
 	# never leave a stopped process behind
-	pkill -CONT -f "$HEAVY" 2>/dev/null
+	guard_cont
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------- preflight
 [ -d "$TREE" ] || { say "FATAL: device tree $TREE is missing"; exit 1; }

@@ -463,3 +463,90 @@ from-scratch sync of this manifest downloads **full history** and peaks around
 120 GB *before* `out/`. Budget 200 GB+, and whenever a project fails, delete its
 `.repo/project-objects/<name>.git` directory so the retry is shallow rather than
 another full-history transfer.
+
+### Failure S4 — `lunch` died silently (and why there was no error line)
+
+The build reached `mka` for the first time and then stopped dead:
+
+```
+== 6. build ==
+including device/xiaomi/mars/vendorsetup.sh
+   release candidates:  ap2a ap3a bp2a
+[2026-10-09T03:41:35Z] build failed (exit 1) -- exiting non-zero so systemd retries
+```
+
+Nothing after "release candidates" — not even the first `-- lunch` line, and no
+error message anywhere. Reproduced by hand:
+
+```
+build/envsetup.sh: line 185: BUILD_VAR_CACHE_READY: unbound variable
+```
+
+`build-local.sh` calls envsetup's `destroy_build_var_cache` while `set -u` is
+still active, and that function does `for v in $cached_vars` — variables that do
+not exist until the build-var cache has been built. Under `set -u` bash **exits
+the whole shell** on the first such dereference, and because the call is written
+`destroy_build_var_cache 2>/dev/null || true`, the message is thrown away: the
+script dies silently. (Bash does flush already-buffered stdout before exiting on
+an unbound variable, which is why the missing lines themselves are the proof that
+it died before the first `echo`.)
+
+Fix: move `set +u` above the cache calls and leave nounset off for the rest of the
+script (`scripts/build-local.sh`). `lunch twrp_mars-ap2a-eng` then reports
+
+```
+TARGET_PRODUCT=twrp_mars  TARGET_BUILD_VARIANT=eng  TARGET_ARCH=arm64
+BUILD_ID=AP2A.240905.003  OUT_DIR=/home/shen/fox_14.1/out
+```
+
+### S5 — a false "the memory guard deadlocked the build" alarm
+
+The guard logs one line when it pauses and nothing afterwards, and Soong's
+analysis phase prints no progress at all (its progress display stays at
+`[99% 1161/1162] cp .../soong_build` for hours while it writes
+`out/soong/build.twrp_mars.ninja`). Together those two facts look exactly like a
+hung build: *"last log line is the MEM GUARD SIGSTOP, no new lines since,
+soong_build apparently gone"*.
+
+It was a false alarm, and the evidence is worth recording because the same
+question will come up again:
+
+| check | result |
+| --- | --- |
+| `ps -eo pid,stat,comm \| awk '$2 ~ /^T/'` | **empty** — nothing was ever stopped |
+| `pgrep -f 'soong_build --top'` | present, `S`, ~26–39 % of a core |
+| `out/soong/build.twrp_mars.ninja` | growing monotonically — 1 157 627 904 → 1 179 279 360 bytes in 60 s |
+| `out/` | growing (2.6 GB → 2.7 GB) |
+| `mka` errors | 0 |
+
+Nothing ever matched the guard's pattern, because it only ever selected
+network/fetch processes (`git-remote-https`, `index-pack`, `git fetch`,
+`main.py.*sync`) and **no fetch was running during the compile** — so `pkill
+-STOP` stopped nothing. But the design was genuinely unsafe, so it was rewritten:
+
+* **resume on whichever comes first** — memory recovering *or* a hard timeout
+  (`MARS_MEM_STOP_MAX`, default 90 s). A stopped process keeps holding its pages,
+  so waiting for the high watermark alone can never terminate: that is a real
+  deadlock, and it is now impossible by construction;
+* **only ever stops network/fetch processes**, and additionally refuses any pid
+  whose `comm` is a build tool (`soong_build`, `soong_ui`, `ninja`, `nsjail`,
+  `mka`, `make`, `cc1plus`, `clang*`, `bash`, `sh`, …), so a pattern mistake
+  cannot freeze the compile chain either;
+* **logs a heartbeat** every `MARS_MEM_HEARTBEAT_S` (default 300 s) with
+  MemAvailable, free swap and the soong/ninja/cc1plus/out state, so the log can
+  never look hung again;
+* `MARS_MEM_GUARD=0` turns the whole thing off — with 8 GB of extra swap in place
+  and zero OOM kills, swapping is the safer fallback.
+
+Deployed with `install … .new && mv -f .new`, never by overwriting in place: bash
+reads a script incrementally, so replacing a file that is *currently executing*
+can corrupt a running build. `mv` swaps the directory entry and the running shell
+keeps reading the old inode.
+
+### Memory: 8 GB of extra swap
+
+`soong_build` peaked at ~15.0 GB RSS on a 15.6 GB machine, with the original 2 GB
+swap **100 % used** and ~120 MB/s of swap traffic. An 8 GB `/swapfile-mars`
+(`fallocate` + `mkswap` + `swapon`, not in `/etc/fstab`) was added for headroom.
+It is non-destructive and removable with `swapoff /swapfile-mars`. Result: **zero
+OOM kills** throughout the compile.
