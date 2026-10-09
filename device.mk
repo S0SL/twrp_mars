@@ -150,10 +150,12 @@ OF_DONT_PATCH_ENCRYPTED_DEVICE := 1
 # ---------------------------------------------------------------------------
 # A/B device
 # ---------------------------------------------------------------------------
-# FOX_AB_DEVICE (not OF_AB_DEVICE): the OF_ spelling is a hard error in
-# OrangeFox's orangefox.mk:597.  vendor/recovery/OrangeFox_vendor.sh accepts
-# either spelling, so this stays compatible.
-FOX_AB_DEVICE := 1
+# Not declared for the first validation build -- see the long note in
+# fox_mars.mk: `OF_AB_DEVICE` is a hard error now, and `FOX_AB_DEVICE` makes
+# orangefox.mk:170 assign to the KATI_READONLY variable AB_OTA_UPDATER, which
+# stops kati.  mars still gets its A/B *mounting* behaviour from the `slotselect`
+# flags in recovery/root/system/etc/recovery.fstab; only the OrangeFox UI's A/B
+# awareness (and bootctl) is off.
 
 # OEM otacert for MIUI/Xiaomi OTA zips (provided by vendor/recovery).
 PRODUCT_EXTRA_RECOVERY_KEYS += \

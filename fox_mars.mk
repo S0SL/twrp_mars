@@ -12,11 +12,22 @@
 # ---------------------------------------------------------------------------
 # Device flags
 # ---------------------------------------------------------------------------
-# NOTE: this must be FOX_AB_DEVICE, not OF_AB_DEVICE.  OrangeFox's
-# bootable/recovery/orangefox.mk:597 turns OF_AB_DEVICE into a hard error
-# (`$(error "OF_AB_DEVICE" is obsolete. Use "export FOX_AB_DEVICE=1" instead)`),
-# which is exactly what killed the first server build at the kati stage.
-FOX_AB_DEVICE := 1
+# A/B flag: deliberately NOT set for the first validation build.
+#
+# The old spelling `OF_AB_DEVICE := 1` is now a hard error
+# (orangefox.mk:597), and the new spelling `FOX_AB_DEVICE := 1` does not work
+# either, because orangefox.mk:167-174 then does
+#     ifneq ($(AB_OTA_UPDATER),true)
+#         AB_OTA_UPDATER := true      <-- line 170
+# and this build system declares AB_OTA_UPDATER with `.KATI_READONLY`
+# (build/make/core/board_config.mk:923-924), so kati stops with
+#     orangefox.mk:170: error: cannot assign to readonly variable: AB_OTA_UPDATER
+#
+# Setting AB_OTA_UPDATER := true early (in BoardConfig.mk) is what would make
+# that assignment a no-op and restore the A/B flag -- see KNOWN_ISSUES I15 for
+# why the tree deliberately does not declare the device A/B to the whole build
+# system.  Until that is decided, leave the flag off: the image still boots, it
+# just is not A/B-aware (no `-DFOX_AB_DEVICE=1`, no bootctl in the recovery).
 OF_USE_GREEN_LED := 0
 OF_NO_TREBLE_COMPATIBILITY_CHECK := 1
 OF_NO_MIUI_PATCH_WARNING := 1

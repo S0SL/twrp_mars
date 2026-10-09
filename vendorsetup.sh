@@ -44,9 +44,11 @@ if [ "$1" = "$FDEVICE" -o "$FOX_BUILD_DEVICE" = "$FDEVICE" ]; then
 	export FOX_USE_DATE_BINARY=1
 	export FOX_DELETE_AROMAFM=1
 
-	# A/B device, no recovery partition.
-	# Must be FOX_AB_DEVICE: OF_AB_DEVICE is a hard error in orangefox.mk:597.
-	export FOX_AB_DEVICE=1
+	# A/B device, no recovery partition -- but the A/B flag is deliberately not
+	# exported for the first validation build (see the note in fox_mars.mk):
+	# `export OF_AB_DEVICE=1` is a hard error in orangefox.mk:597, and
+	# `export FOX_AB_DEVICE=1` makes orangefox.mk:170 assign to the readonly
+	# AB_OTA_UPDATER and stops kati.
 
 	# mars has no alternate SKU codename
 	export TARGET_DEVICE_ALT=""
