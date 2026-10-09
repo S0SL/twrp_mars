@@ -153,12 +153,36 @@ repair_giants() {
 		# path inside the source tree: the platform/ prefix is stripped by convention
 		wt="$FOX_DIR/${proj#platform/}"
 		g="$FOX_DIR/.repo/projects/${proj#platform/}.git"
-		for attempt in 1 2 3 4 5 6; do
+		# Clear the work side BEFORE the first attempt too.  repo only passes
+		# --depth=1 to a project it considers new; as soon as the work git-dir
+		# exists it silently fetches FULL history instead (see BUILD-STATUS.md
+		# S2), which is exactly the 10-20 GB transfer that keeps dying.
+		case "$wt" in
+		"$FOX_DIR"/prebuilts/*)
+			if [ -e "$g" ] || [ -e "$wt" ]; then
+				say "clearing the work side of $proj so every attempt fetches shallow"
+				rm -rf "$wt" "$g"
+			fi
+			;;
+		esac
+		find "$FOX_DIR/.repo/project-objects/$proj.git" -name 'tmp_pack_*' -delete 2>/dev/null
+		for attempt in 1 2 3 4 5 6 7 8 9; do
 			[ -d "$FOX_DIR/.repo" ] || return 0
-			say "targeted shallow sync of $proj (attempt $attempt)"
+			# These multi-GB transfers die intermittently on any single host with
+			# "RPC failed; curl 56 GnuTLS recv error (-9)", so rotate the AOSP
+			# mirror instead of retrying the same one forever.
+			case $(( (attempt - 1) % 3 )) in
+			0) mir="https://mirrors.tuna.tsinghua.edu.cn/git/AOSP" ;;
+			1) mir="https://mirrors.ustc.edu.cn/aosp" ;;
+			2) mir="https://mirrors.bfsu.edu.cn/git/AOSP" ;;
+			esac
+			git config --global url."$mir/".insteadOf "https://android.googlesource.com/" 2>/dev/null
+			say "targeted shallow sync of $proj (attempt $attempt, mirror $mir)"
 			( cd "$FOX_DIR" && repo sync -j1 --force-sync -c --no-clone-bundle --no-tags "$proj" ) && break
 			say "  $proj attempt $attempt failed"
 			clear_locks
+			# do not let the object dir fill up with failed tmp packs
+			find "$FOX_DIR/.repo/project-objects/$proj.git" -name 'tmp_pack_*' -delete 2>/dev/null
 			# A checkout interrupted mid-way leaves an index that disagrees with
 			# the working tree (thousands of staged deletions) and no later
 			# checkout can ever converge; start that project over instead.
