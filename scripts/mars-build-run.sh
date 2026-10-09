@@ -112,11 +112,12 @@ guard_safe_to_stop() {
 }
 
 guard_stop() {
-	local p
+	local p n=0
 	for p in $(pgrep -f "$HEAVY" 2>/dev/null); do
 		[ "$p" = "$$" ] && continue
-		if guard_safe_to_stop "$p"; then kill -STOP "$p" 2>/dev/null; fi
+		if guard_safe_to_stop "$p"; then kill -STOP "$p" 2>/dev/null && n=$((n + 1)); fi
 	done
+	echo "$n"
 }
 
 guard_cont() {
@@ -133,10 +134,19 @@ mem_guard() {
 		avail=$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)
 		now=$(date +%s)
 		if [ "$PAUSED" = 0 ] && [ "${avail:-0}" -lt "$MEM_LOW" ]; then
-			say "MEM GUARD: MemAvailable ${avail}MB < ${MEM_LOW}MB -- pausing fetch/network processes (max ${MEM_STOP_MAX}s)"
-			guard_stop
-			PAUSED=1
-			PAUSED_SINCE=$now
+			local stopped
+			stopped=$(guard_stop)
+			if [ "${stopped:-0}" -gt 0 ]; then
+				say "MEM GUARD: MemAvailable ${avail}MB < ${MEM_LOW}MB -- paused $stopped fetch/network process(es) (max ${MEM_STOP_MAX}s)"
+				PAUSED=1
+				PAUSED_SINCE=$now
+			else
+				# nothing to pause (no fetch running): warn once in a while but do
+				# NOT enter the paused state, otherwise the guard would cycle
+				# pause/resume every 90 s and spam the log for no reason
+				[ $((GUARD_TICKS % 180)) -lt 10 ] && \
+					say "MEM GUARD: MemAvailable ${avail}MB is low but no fetch/network process is running -- nothing to pause (build unaffected)"
+			fi
 		elif [ "$PAUSED" = 1 ]; then
 			if [ "${avail:-0}" -gt "$MEM_HIGH" ] || [ $((now - PAUSED_SINCE)) -ge "$MEM_STOP_MAX" ]; then
 				say "MEM GUARD: resuming after $((now - PAUSED_SINCE))s (MemAvailable ${avail}MB) -- SIGCONT"
