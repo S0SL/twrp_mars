@@ -245,6 +245,14 @@ if [ -z "$RELEASES" ]; then
 fi
 echo "   release candidates: $RELEASES"
 
+# envsetup.sh's helpers dereference variables that do not exist until the build
+# var cache has been built ($cached_vars, $BUILD_VAR_CACHE_READY).  Under
+# `set -u` the first such dereference aborts the whole shell -- and because the
+# cache call below sends stderr to /dev/null it does so *silently*, with no
+# error line at all.  That is exactly how the first server build died between
+# "release candidates" and the first lunch attempt.  So nounset stays off from
+# here to the end of the script; -e and -o pipefail are untouched.
+set +u
 LUNCH_OK=0
 for REL in $RELEASES; do
 	CAND="twrp_mars-$REL-eng"
@@ -253,14 +261,11 @@ for REL in $RELEASES; do
 	destroy_build_var_cache 2>/dev/null || true
 	unset BUILD_VAR_CACHE_READY || true
 	echo "   -- lunch $CAND"
-	set +u
 	if lunch "$CAND" >"/tmp/lunch-$REL.log" 2>&1; then
-		set -u
 		echo "      ok"
 		LUNCH_OK=1
 		break
 	fi
-	set -u
 	echo "      failed:"
 	sed -n '1,40p' "/tmp/lunch-$REL.log" | sed 's/^/      | /'
 done
