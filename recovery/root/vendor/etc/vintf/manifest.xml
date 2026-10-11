@@ -1,0 +1,53 @@
+<!--
+    Device VINTF manifest for the recovery ramdisk.
+
+    Only the HIDL HALs that this recovery actually starts are declared here:
+    libhidlbase refuses to register an interface that has no manifest entry
+    ("... must be in VINTF manifest in order to register/get.",
+    system/libhidl/transport/ServiceManagement.cpp:1029) when it is built with
+    ENFORCE_VINTF_MANIFEST, which is the case for the vendor HALs.
+
+    Declared:
+      * android.hardware.keymaster@4.1  = vendor HIDL keymaster,
+            /system/bin/android.hardware.keymaster@4.1-service-qti, started by
+            init.recovery.qcom_decrypt.rc; keystore2 reaches the TEE through it
+            (libkeystore2_km_compat / libkm_compat_service).
+      * android.hardware.gatekeeper@1.0 = /system/bin/android.hardware.gatekeeper@1.0-service-qti,
+            needed to verify the user credential for FBE.
+      * android.hardware.health@2.1     = /system/bin/android.hardware.health@2.1-service.
+
+    Reference: OrangeFox/device_vayu (fox_14.1) ships the same declarations in
+    its recovery/root/vendor/etc/vintf/manifest.xml.
+-->
+<manifest version="1.0" type="device">
+    <hal format="hidl">
+        <name>android.hardware.keymaster</name>
+        <transport>hwbinder</transport>
+        <version>4.1</version>
+        <interface>
+            <name>IKeymasterDevice</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@4.1::IKeymasterDevice/default</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.hardware.gatekeeper</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>IGatekeeper</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.0::IGatekeeper/default</fqname>
+    </hal>
+    <hal format="hidl">
+        <name>android.hardware.health</name>
+        <transport>hwbinder</transport>
+        <version>2.1</version>
+        <interface>
+            <name>IHealth</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@2.1::IHealth/default</fqname>
+    </hal>
+</manifest>
