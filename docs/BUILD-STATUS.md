@@ -619,3 +619,130 @@ Two ways out, recorded with their trade-offs:
   and the A/B flag comes back. It is a bigger semantic change and exactly what
   KNOWN_ISSUES I15 warns about, so it deserves its own build round rather than
   being smuggled into the first one.
+
+---
+
+## v2 — RESULT: built and delivered; the black screen is root-caused and fixed
+
+`fastboot boot` of v1 (`ac5bcb3e…`) reached recovery (adb/`twrpfastboot` came up) but the
+panel never lit. v2 replaces the kernel and completes the recovery userspace.
+
+```
+v1  boot.img  sha256 ac5bcb3e6e555540227b40db99337c7bae1b37a6078d24d054c3ffbd81d3b54b
+v2  boot.img  sha256 66ec5936357305de7601c8b917e1e616ee38badabc4426daad358b329f1771d6
+    (both 201326592 bytes / 192 MiB, header v3, ramdisk LZMA, cmdline twrpfastboot=1)
+```
+
+### Cause A (primary) — the prebuilt kernel could never accept the ROM's modules
+
+v1 shipped the BakaSU kernel:
+
+| | v1 | v2 |
+| --- | --- | --- |
+| `prebuilt/Image` | BakaSU+SUSFS `02a0ca550d01c9cc48cfb479c5ac43410b6b61822212c1136842d319bf52cbd9` | **LineageOS 23.2 official stock** `2287c094ea0291fc21f231273af3cd3d3af80efffb1f2a5f5b06aa9e04f7e8bf` |
+| size | 39 680 512 B | 39 428 608 B |
+| `strings Image` version | `5.4.302-qgki-g797c093f5b52` | `5.4.302-qgki-g7ede20c8692e` |
+| vermagic | `5.4.302-qgki-g797c093f5b52 SMP preempt mod_unload modversions aarch64` | `5.4.302-qgki-g7ede20c8692e SMP preempt mod_unload modversions aarch64` |
+
+Display on lahaina is **not** built into the kernel: `techpack/display/config/gki_lahainadisp.conf`
+sets `CONFIG_DISPLAY_BUILD=m`, so `msm_drm.ko` is a module and is the only path by which the
+panel comes up. Recovery gets that module from the installed ROM's `/vendor/lib/modules`
+(`partitionmanager.cpp:500` -> `KernelModuleLoader::Load_Vendor_Modules()`, i.e. `twrp.cpp:539`
+`Process_Fstab()`, *before* `twrp.cpp:549 gui_init()`). With `CONFIG_MODVERSIONS=y` the symbol
+CRCs and the vermagic must match the running kernel, and the ROM's modules are built for
+`-g7ede20c8692e` — the BakaSU Image (`-g797c093f5b52`) therefore loaded **zero** of the 11
+requested modules (no display, no touch, no charger), which is exactly "boots, screen black".
+
+v2 uses the **LineageOS official stock Image** from
+`boot-stock-LOS23.2-20260930.zip` (unpacked with `magiskboot unpack`), whose vermagic matches
+the ROM modules 1:1, so TWRP's own `modprobe` path now succeeds. The user's device confirms
+`msm_drm.ko` (display) and `fts_touch_spi.ko` (touch) are both in `/vendor/lib/modules`
+(105 modules total).
+
+`TW_LOAD_VENDOR_MODULES` already carries LineageOS' own mars list
+(`android_device_xiaomi_mars/BoardConfig.mk: BOOT_KERNEL_MODULES`) — `msm_drm.ko`,
+`fts_touch_spi.ko`, `xiaomi_touch.ko`, `hwid.ko`, `mmhardware_sysfs_dlkm.ko`,
+`qti_battery_charger_main.ko`, `adsp_loader_dlkm.ko`, `apr_dlkm.ko`, `q6_notifier_dlkm.ko`,
+`q6_pdr_dlkm.ko`, `snd_event_dlkm.ko` — so **no kernel module is compiled into the ramdisk**
+(the `LOG(FATAL)` trap of `modules.load.recovery` is avoided by construction; see
+RAMDISK-MODULES.md §3).
+
+One robustness change was added next to it:
+
+```make
+TW_LOAD_VENDOR_BOOT_MODULES := true     # also scan /lib/modules from the device's vendor_boot ramdisk
+```
+
+### Cause B (secondary) — display userspace libraries, and the touch firmware was venus'
+
+v1's ramdisk contained `system/lib64/vendor.display.config@1.0.so` (162 552 B) and
+`@2.0.so` (139 768 B) but **no `libdisplayconfig.qti.so` and nothing under `/vendor/lib64`**.
+v2 adds the three CAF display libraries **pulled from the user's own mars device** into
+`recovery/root/vendor/lib64/` (mode 644, `u:object_r:vendor_file:s0` by the generic
+`/(vendor|system/vendor)(/.*)?` rule):
+
+| file | size | sha256 |
+| --- | --- | --- |
+| `vendor/lib64/libdisplayconfig.qti.so` | 105 944 | `d09375599394fc9f8c3028f78b4240148722bd610a9eecc9e79df7ead4930024` |
+| `vendor/lib64/vendor.display.config@1.0.so` | 160 928 | `d3e580febfb6ce13a5f55d87e4a3b1add83978e4f83db7744cfb18def069ec64` |
+| `vendor/lib64/vendor.display.config@2.0.so` | 140 432 | `31854c8ce099cc958759c75e3a0b8aa6f3d9a1c06180acc18a79ca008203f2ca` |
+
+Their only `DT_NEEDED`s are `libhidlbase/liblog/libutils/libcutils/libc++/libc/libm/libdl`
+(nothing exotic, and modern: no `libhidltransport`), so they can load in the recovery ramdisk.
+
+Note: **neither TheMuppets repo has these three files** — `proprietary_vendor_xiaomi_mars`
+and `proprietary_vendor_xiaomi_sm8350-common` (`lineage-23.2`, full recursive trees) contain
+only `libops.so` / `libwfddisplayconfig*.so`. They are only available from the device's own
+`/vendor/lib64`, which is where these copies come from.
+
+Touch firmware: the tree had the **venus** `.ftb` (117 752 B); mars' own is **118 356 B** and
+is now in both places (`firmware/` and `recovery/root/lib/firmware/`).
+`st_fts_k2_htp.ftb` is byte-identical between the two trees (108 064 B,
+`3480962886e8313324c590599215d0167a4134dcea86190eeea4578806c263a3`).
+
+### Evidence from the delivered image
+
+```
+$ magiskboot unpack boot-v2.img
+KERNEL_SZ [39428608]  RAMDISK_SZ [18814764]  RAMDISK_FMT [lzma]  CMDLINE [twrpfastboot=1]
+$ sha256sum kernel
+2287c094ea0291fc21f231273af3cd3d3af80efffb1f2a5f5b06aa9e04f7e8bf        # == stock Image
+$ strings kernel | grep -m1 5.4.302
+5.4.302-qgki-g7ede20c8692e
+
+$ cpio -itv < ramdisk.cpio | grep -E 'display|st_fts'
+-rw-r--r-- 1 root root 118356 lib/firmware/st_fts_k2.ftb          # was 117752 (venus)
+-rw-r--r-- 1 root root 108064 lib/firmware/st_fts_k2_htp.ftb
+-rw-r--r-- 1 root root 162552 system/lib64/vendor.display.config@1.0.so   # pre-existing
+-rw-r--r-- 1 root root 139768 system/lib64/vendor.display.config@2.0.so   # pre-existing
+-rw-r--r-- 1 root root 105944 vendor/lib64/libdisplayconfig.qti.so        # new
+-rw-r--r-- 1 root root 160928 vendor/lib64/vendor.display.config@1.0.so   # new
+-rw-r--r-- 1 root root 140432 vendor/lib64/vendor.display.config@2.0.so   # new
+```
+
+Uncompressed ramdisk grew 77 968 896 -> 78 377 728 B (+408 832 = the three `.so` 407 304 B
+plus the +604 B firmware). `lib/modules` is deliberately absent, i.e. no `modules.load*` is
+shipped (see RAMDISK-MODULES.md §3).
+
+### How to validate (nothing is flashed)
+
+```sh
+adb reboot bootloader
+fastboot boot boot-v2.img
+```
+
+1. the OrangeFox splash/UI should now appear (that is the whole point of the kernel swap);
+2. if it does not, adb is up before the GUI, so collect the module decision:
+
+```sh
+adb shell 'grep -E "Checking directory|Modules Loaded|msm_drm" /tmp/recovery.log'
+adb shell lsmod | grep -E "msm_drm|fts_touch_spi|xiaomi_touch"
+```
+
+`Modules Loaded: 0` with `Checking directory: /vendor/lib/modules` means the modules still are
+not being accepted by the kernel; a non-zero count with a black panel points at the DRM/panel
+side (then `dmesg | grep -i -E "msm_drm|dsi|panel"` decides).
+3. touch is the second target: `fts_touch_spi.ko` + `xiaomi_touch.ko` + the mars `.ftb`.
+
+Rollback is a non-event: `fastboot boot` touches no partition, and flashing back the stock
+`boot` image (or v1) restores the previous state.
