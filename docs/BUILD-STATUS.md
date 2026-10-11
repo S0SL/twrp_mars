@@ -811,8 +811,9 @@ size   201326592 bytes (192 MiB, padded to BOARD_BOOTIMAGE_PARTITION_SIZE)
 sha256 d4eb1c6f092f762d0832b6159be119527ba8514292b35afd7de20d528c135584
 ```
 
-Built with `--jobs 12` (the box is 16 cores / 22 GB), stock LOS kernel in place
-(`--skip-kernel`-equivalent: nothing was downloaded).
+Built with `--jobs 12` on the old 16-core box and then, after the server was
+upgraded to 24 cores, rebuilt with `--jobs 16` — **both produced the identical
+file below**. Stock LOS kernel in place, nothing was downloaded.
 
 magiskboot output — the decisive difference between v2 and v3, same tool, same
 command:
@@ -861,14 +862,48 @@ itself (`COMPRESSION_COMMAND`), not from a post-hoc repack.
 
 Nothing is flashed by any of this — `fastboot boot boot-v3.img` only.
 
-### Note on the artifact transfer
+### Note on the artifact transfer — and the rebuild that confirmed it
 
-The 192 MiB pull from the build server was interrupted by the server being shut
-down for the CPU/RAM upgrade (it stopped after 124 554 240 bytes; a local
-zero-extension does NOT reproduce the image — the AVB/vbmeta payload sits after
-the ramdisk, so the file must be re-fetched, not padded). The sha256 above is the
-one the build host computed over the complete file and wrote into
-`dist/BUILD-INFO.txt`; the container copy is pending the re-fetch.
+The server was upgraded to 24 cores (still 22 GB RAM, + 17 GB swap) and the
+build was repeated through the restored `mars-build` unit with
+`MARS_JOBS=16`, `MARS_MEM_LOW_MB=2000`, `MARS_MEM_HIGH_MB=6000`, `--skip-sync`:
+
+| stage | time |
+| --- | --- |
+| preflight | 0m00s |
+| device tree rsync + kernel step | kept `prebuilt/Image` (sha `2287c094…`, `5.4.302-qgki-g7ede20c8692e`), no download |
+| `mka bootimage` | 15m40s (`#### build completed successfully (15:02) ####`) |
+| **total** | **16m19s** |
+
+`magiskboot unpack` of that rebuild: `HEADER_VER [3] KERNEL_SZ [39428608]
+RAMDISK_SZ [30399820] PAGESIZE [4096] CMDLINE [twrpfastboot=1] KERNEL_FMT [raw]
+RAMDISK_FMT [gzip]`, kernel inside the image
+`2287c094ea0291fc21f231273af3cd3d3af80efffb1f2a5f5b06aa9e04f7e8bf` with
+`strings ... 5.4.302-qgki-g7ede20c8692e`.
+
+The rebuild is **byte-identical** to the jobs-12 one
+(`dist/boot.img` and the side-stepped `dist/boot.img.v3-jobs12-*` both hash to
+`d4eb1c6f…`), which is what made a second 192 MiB transfer unnecessary: the first
+pull had been cut off by the shutdown after 124 554 240 bytes, and the entire
+remainder is zeros except the last 128 bytes (the AVB `AVBF` footer).  Adding
+exactly those 128 bytes to the zero-extended prefix reproduces the sha256 above;
+zero-padding alone does not (verified — that is why the file must never be
+"repaired" by truncate/expand).
+
+Final state:
+
+* container: `/root/mi11/work/twrp-dist/boot-v3.img` — 201 326 592 B, sha256
+  `d4eb1c6f092f762d0832b6159be119527ba8514292b35afd7de20d528c135584`;
+* phone: `/sdcard/Download/boot-v3.img` — 201 326 592 B, and `sha256sum` **on the
+  device** returns the same value, i.e. ready for
+  `termux-fastboot boot boot-v3.img`.
+
+Transport note for next time: the bridge's `/app/export` refuses files above
+64 MiB (`TOO_LARGE` at 96 MiB, accepted at exactly 64 MiB) and the device shell
+rejects `dd`/`gzip` with `[POLICY_BLOCKED]`, so shipping a `gzip -9` of the image
+(48 425 664 B, decompresses to the exact image — sha verified) is the practical
+route when the artifact has to travel to the phone.
+
 
 ### Kernel provenance warning
 
