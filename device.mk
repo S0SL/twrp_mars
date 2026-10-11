@@ -215,5 +215,23 @@ OF_DONT_PATCH_ENCRYPTED_DEVICE := 1
 # awareness (and bootctl) is off.
 
 # OEM otacert for MIUI/Xiaomi OTA zips (provided by vendor/recovery).
+# ---------------------------------------------------------------------------
+# V4.1: /etc/task_profiles.json must exist in the recovery ramdisk
+#
+# logd aborts on start (SIGABRT) because
+#     system/logging/logd/main.cpp:77  PLOG(FATAL) << "failed to set background
+#     scheduling policy";
+# follows set_sched_policy(0, SP_BACKGROUND) failing: libprocessgroup cannot
+# find the SCHED_SP_BACKGROUND profile because /etc/task_profiles.json is not in
+# the recovery ramdisk.  AOSP ships that file as the module `task_profiles.json`,
+# while TWRP's bootable/recovery/Android.mk:584 asks for a module named
+# `task_recovery_profiles.json` that does not exist in this tree -- so nothing
+# ever put it into the *recovery* ramdisk (out/.../recovery/root/system/etc has
+# cgroups.json but no task_profiles.json).  Result: logd restart-loops every 5 s
+# and every other service's liblog output is silently dropped, which is why the
+# keystore2/keymaster abort reasons were invisible.  Copy it explicitly.
+PRODUCT_COPY_FILES += \
+    system/core/libprocessgroup/profiles/task_profiles.json:$(TARGET_COPY_OUT_RECOVERY)/root/system/etc/task_profiles.json
+
 PRODUCT_EXTRA_RECOVERY_KEYS += \
     vendor/recovery/security/miui

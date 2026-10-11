@@ -44,6 +44,20 @@ on property:ro.boot.usbcontroller=*
     setprop sys.usb.controller ${ro.boot.usbcontroller}
     write /sys/class/udc/${ro.boot.usbcontroller}/device/../mode peripheral
 
+# v4.1: the cgroup directories that the recovery task profiles join.
+# SCHED_SP_BACKGROUND (used by logd at startup) joins cpu/background and
+# blkio/background; libprocessgroup's SetCgroupAction only *opens*
+# <controller>/<path>/cgroup.procs, it never creates the directory, and the
+# recovery cgroups.json lists controllers only.  Created in `on fs`, i.e. after
+# logd's first (failing) start; init restarts logd and it then comes up.
+# is started at `on init` (before these mounts are usable) and init restarts it,
+# so it comes up on one of the following attempts.
+on fs
+    mkdir /dev/cpuctl/background 0770 system system
+    mkdir /dev/cpuctl/foreground 0770 system system
+    mkdir /dev/blkio/background 0770 system system
+    mkdir /dev/blkio/foreground 0770 system system
+
 on property:dev.mnt.blk.firmware=*
     write /sys/kernel/boot_adsp/boot 1
 
