@@ -227,6 +227,37 @@ if [ -f "$OBSOLETE_FILE" ]; then
 else
 	fail "$OBSOLETE_FILE is missing"
 fi
+# Regression guard for the v1/v2 black screen (no adb, no init).
+#
+# The recovery ramdisk was LZMA-alone (`5d 00 00 80`), which mars' kernel cannot
+# unpack: `zcat /proc/config.gz | grep CONFIG_RD_` on the device says
+#     CONFIG_RD_GZIP=y  CONFIG_RD_LZ4=y
+#     # CONFIG_RD_LZMA is not set   (also XZ/LZO/BZIP2 off)
+# so the kernel never ran /init -> black screen, adbd never started, on two
+# different kernels (which is what ruled the kernel out).
+#
+# The non-gzip compressors are selected by these variables; none of them may be
+# truthy.  Note the value test: `BOARD_RAMDISK_USE_LZMA := false` is fine and
+# is in fact what fox_mars.mk now sets, so only 1/true count as enabled.
+# This check runs in ~10 s and fails before a ~10 min build plus a black screen.
+BADRAM=""
+for kv in \
+	"OF_USE_LZMA_COMPRESSION" \
+	"OF_USE_LZ4_COMPRESSION" \
+	"BOARD_RAMDISK_USE_LZMA" \
+	"BOARD_RAMDISK_USE_LZ4" \
+	"BOARD_RAMDISK_USE_XZ"
+do
+	if grep -qE "^[[:space:]]*(export[[:space:]]+)?${kv}[[:space:]]*:?=[[:space:]]*(1|true)[[:space:]]*$" $MK_FILES 2>/dev/null; then
+		BADRAM="$BADRAM $kv"
+	fi
+done
+if [ -n "$BADRAM" ]; then
+	fail "non-gzip ramdisk compression enabled:$BADRAM -- mars' kernel has no CONFIG_RD_LZMA/XZ/LZO/BZIP2, only GZIP/LZ4 (v1/v2 black screen)"
+else
+	pass "ramdisk compression is gzip (kernel: CONFIG_RD_GZIP=y, no LZMA)"
+fi
+
 # Same class, warning only: deprecated, not an error.
 if grep -qE "^[[:space:]]*TARGET_USES_64_BIT_BINDER[[:space:]]*[:+?]?=" $MK_FILES 2>/dev/null; then
 	warn "TARGET_USES_64_BIT_BINDER is deprecated in this build system (remove it)"

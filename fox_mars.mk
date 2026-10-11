@@ -80,11 +80,44 @@ OF_CLOCK_POS := 1
 OF_OPTIONS_LIST_NUM := 9
 
 # ---------------------------------------------------------------------------
-# Ramdisk compression
-#   fox_14.1 ramdisks are large; lzma keeps the recovery ramdisk inside the
-#   192 MiB boot partition.  (Same rationale as OrangeFox/device/vayu.)
+# Ramdisk compression: GZIP (the build system default).  DO NOT switch to LZMA.
+#
+# v1 and v2 both shipped an LZMA-alone ramdisk (magic `5d 00 00 80`) and both
+# came up as a black screen with no adb -- on two completely different kernels
+# (BakaSU `-g797c093f5b52` and LineageOS stock `-g7ede20c8692e`), which is what
+# proved the ramdisk, not the kernel, was at fault.
+#
+# The chain that produced it:
+#   bootable/recovery/orangefox.mk:371
+#       ifeq ($(OF_USE_LZMA_COMPRESSION),1)
+#           BOARD_RAMDISK_USE_LZMA := true
+#   build/make/core/Makefile:1210
+#       else ifeq ($(BOARD_RAMDISK_USE_LZMA),true)
+#           COMPRESSION_COMMAND := $(LZMA) -f -c     # `lzma` alone, not xz
+#
+# The kernel unpacks an initramfs only with a decompressor it was built with,
+# and mars' kernel (LineageOS 23.2 stock) was built with -- read straight off
+# the running device, `zcat /proc/config.gz | grep CONFIG_RD_`:
+#       CONFIG_RD_GZIP=y
+#       # CONFIG_RD_LZMA is not set     <-- the root cause of v1 and v2
+#       # CONFIG_RD_XZ is not set
+#       # CONFIG_RD_LZO is not set
+#       # CONFIG_RD_BZIP2 is not set
+#       CONFIG_RD_LZ4=y
+# An archive the kernel cannot decompress makes `unpack_to_rootfs()` fail, so no
+# /init is ever executed: black screen, adbd never starts.  The stock mars
+# boot.img agrees -- its ramdisk is gzip (magic `1f 8b 08`).
+#
+# Size is a non-issue: ~19 MB LZMA vs ~25 MB gzip for the recovery ramdisk
+# inside a 192 MiB (201326592 B) boot partition.
+#
+# `BOARD_RAMDISK_USE_LZMA := false` is explicit so that re-adding the OrangeFox
+# switch (or a future default change) cannot silently bring LZMA back; the
+# unset else-branch in core/Makefile then selects gzip.
+# scripts/check-tree.sh fails in ~10 s if any non-gzip ramdisk compression is
+# re-enabled.
 # ---------------------------------------------------------------------------
-OF_USE_LZMA_COMPRESSION := 1
+BOARD_RAMDISK_USE_LZMA := false
 
 # use dmctl when formatting /data
 OF_USE_DMCTL := 1
