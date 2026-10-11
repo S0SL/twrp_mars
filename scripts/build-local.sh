@@ -12,17 +12,25 @@
 #   4. device tree-- rsync this working copy into <tree>/device/xiaomi/mars
 #   5. kernel     -- keep $DEST/prebuilt/Image if present (auto), else
 #                    scripts/fetch-kernel.sh -> device/xiaomi/mars/prebuilt/Image
-#   6. build      -- lunch twrp_mars-<release>-eng ; mka recoveryimage
+#   6. build      -- lunch twrp_mars-<release>-eng ; mka bootimage (recovery-as-boot)
 #   7. collect    -- dist/{boot.img,...} + BUILD-INFO.txt + sha256sums
 #
 # The full walkthrough, timings, hardware requirements and the troubleshooting
 # table live in docs/BUILD-ON-SERVER.md.
 #
+# WARNING about the kernel: the recovery boots the ROM's kernel modules from
+# /vendor/lib/modules at runtime (msm_drm.ko lights the panel), and with
+# CONFIG_MODVERSIONS=y they only load into the matching kernel.  Keep the stock
+# LineageOS 23.2 Image (5.4.302-qgki-g7ede20c8692e, sha256 2287c094…f7e8bf);
+# the default --kernel-url is a BakaSU build (-g797c093f5b52) whose vermagic
+# does not match.  Section 5 prints the sha256 and the version string of the
+# Image it will use, so the log always says which kernel went in.
+#
 # Usage:
 #   ./scripts/build-local.sh [options]
 #
 #   --fox-dir DIR        build tree            (default $FOX_DIR or ~/fox_14.1)
-#   --jobs N             parallel jobs         (default: nproc, capped at 12;
+#   --jobs N             parallel jobs         (default: nproc, capped at 16;
 #                        MARS_JOBS overrides)
 #   --kernel-url URL     prebuilt kernel Image (implies --force-kernel)
 #   --force-kernel       download even though prebuilt/Image already exists
@@ -38,14 +46,6 @@
 #                        build/release/release_configs, then ap2a ap3a bp2a)
 #   -h|--help
 #
-# WARNING about the kernel: the recovery boots the ROM's kernel modules from
-# /vendor/lib/modules at runtime (msm_drm.ko lights the panel), and with
-# CONFIG_MODVERSIONS=y they only load into the matching kernel.  Keep the stock
-# LineageOS 23.2 Image (5.4.302-qgki-g7ede20c8692e, sha256 2287c094…f7e8bf);
-# the default --kernel-url is a BakaSU build (-g797c093f5b52) whose vermagic
-# does not match.  Section 5 prints the sha256 and the version string of the
-# Image it will use, so the log always says which kernel went in.
-#
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
@@ -53,10 +53,10 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FOX_DIR="${FOX_DIR:-$HOME/fox_14.1}"
-# Parallelism: derive it from the host (MARS_JOBS overrides).  The build box is
-# 16 cores / 22 GB + swap, so cap at 12 -- 16 concurrent cc1plus/lld jobs can
-# still trip the OOM killer, and the previous hard-coded default of 4 left
-# 12 cores idle and turned a ~10 min build into a ~40 min one.
+# Parallelism: derive it from the host (MARS_JOBS / --jobs overrides).  The
+# build box is 24 cores / 22 GB + 17 GB swap: 16 jobs (~1.5 GB each) is the
+# sweet spot the operator picked -- 24 concurrent cc1plus/lld jobs thrash, and
+# the old hard-coded 4 left 20 cores idle.
 JOBS="${MARS_JOBS:-}"
 KERNEL_URL="${KERNEL_URL:-https://github.com/S0SL/android_kernel_xiaomi_sm8350/releases/download/boot-img-LOS23.2-20260930-bakasu/anykernel3-BakaSU-susfs-v2.3.0-mars.zip}"
 BUILD_TYPE="${FOX_BUILD_TYPE:-Unofficial}"
@@ -101,10 +101,10 @@ case "$FOX_DIR" in
 esac
 [ -z "$CCACHE_DIR" ] && CCACHE_DIR="$FOX_DIR/.ccache"
 
-# JOBS: nproc unless MARS_JOBS/--jobs says otherwise, capped at 12.
+# JOBS: nproc unless MARS_JOBS/--jobs says otherwise, capped at 16.
 if [ -z "$JOBS" ]; then
 	JOBS="$(nproc 2>/dev/null || echo 4)"
-	if [ "$JOBS" -gt 12 ]; then JOBS=12; fi
+	if [ "$JOBS" -gt 16 ]; then JOBS=16; fi
 fi
 case "$JOBS" in
 	''|*[!0-9]*) echo "ERROR: --jobs must be a positive integer (got '$JOBS')" >&2; exit 2 ;;
@@ -144,7 +144,7 @@ if [ -n "${FREE_GB:-}" ]; then
 fi
 MEM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 echo "   RAM: ${MEM_GB} GB (linking needs headroom; 16 GB+ recommended)"
-echo "   jobs: $JOBS (nproc capped at 12; --jobs N or MARS_JOBS=N to override, --jobs 4 on a small box)"
+echo "   jobs: $JOBS (nproc capped at 16; --jobs N or MARS_JOBS=N to override, --jobs 4 on a small box)"
 
 # Dependency check.  The apt package set is the same one the CI installs (see
 # docs/BUILD-ON-SERVER.md); printing the exact command matters, because the
@@ -242,7 +242,7 @@ elif [ "$SKIP_KERNEL" = auto ] && [ "$FORCE_KERNEL" != 1 ] && [ -f "$DEST/prebui
 	echo "   --force-kernel would replace it with: $KERNEL_URL"
 else
 	if [ "$KERNEL_URL" = "https://github.com/S0SL/android_kernel_xiaomi_sm8350/releases/download/boot-img-LOS23.2-20260930-bakasu/anykernel3-BakaSU-susfs-v2.3.0-mars.zip" ]; then
-		echo "   WARNING: no kernel was in place and --kernel-url was not given, so the"
+		echo "   WARNING: no kernel was in place and --kernel-url was not given, so the" >&2
 		echo "            default BakaSU release is being downloaded.  That kernel is" >&2
 		echo "            '-g797c093f5b52' and does NOT match a LineageOS 23.2 ROM's" >&2
 		echo "            /vendor/lib/modules (vermagic + MODVERSIONS): msm_drm.ko" >&2
@@ -267,7 +267,7 @@ if [ -f "$DEST/prebuilt/Image" ]; then
 		exit 1
 	fi
 	if command -v strings >/dev/null 2>&1; then
-		strings "$DEST/prebuilt/Image" | grep -m1 'Linux version' | sed 's/^/   /'
+		strings "$DEST/prebuilt/Image" | grep -m1 '5\.4\.302' | sed 's/^/   /' || true
 	fi
 fi
 
@@ -342,13 +342,70 @@ done
 }
 
 echo "   TARGET_PRODUCT=$(get_build_var TARGET_PRODUCT) TARGET_RELEASE=$(get_build_var TARGET_RELEASE)"
-echo "   starting mka recoveryimage (log: $LOG)"
+
+# ---------------------------------------------------------------------------
+# Which make goal actually produces an image?
+#
+# With `BOARD_USES_RECOVERY_AS_BOOT := true` -- which this device tree sets --
+# build/make/core/Makefile:275-285 deliberately leaves
+# INSTALLED_RECOVERYIMAGE_TARGET EMPTY:
+#
+#     ifneq ($(BOARD_USES_RECOVERY_AS_BOOT),true)
+#     INSTALLED_RECOVERYIMAGE_TARGET := $(PRODUCT_OUT)/recovery.img
+#     endif
+#
+# so `mka recoveryimage` is a goal with NO prerequisites.  ninja then prints
+# "no work to do", the build reports success in ~5 minutes, and not a single
+# .img file exists -- which is exactly the failure that made the systemd unit
+# restart eight times against an empty dist/.  Neither `make` nor `repo` ever
+# says a word about it.
+#
+# In this configuration the image is produced by the *boot* target:
+# Makefile:2424-2426, inside the BUILDING_RECOVERY_IMAGE branch, does
+#
+#     ifeq ($(BOARD_USES_RECOVERY_AS_BOOT),true)
+#     INSTALLED_BOOTIMAGE_TARGET := $(BUILT_BOOTIMAGE_TARGET)
+#     endif
+#
+# i.e. $(PRODUCT_OUT)/boot.img is built *with* the recovery ramdisk inside it.
+# (board_config.mk:448-462 keeps BUILDING_BOOT_IMAGE empty for this config,
+# which is why this had to be verified by running `mka bootimage`, not inferred
+# from the variable.)
+# ---------------------------------------------------------------------------
+RASB="$(get_build_var BOARD_USES_RECOVERY_AS_BOOT 2>/dev/null || true)"
+if [ "$RASB" = "true" ]; then
+	GOALS="${MARS_BUILD_GOALS:-bootimage}"
+else
+	GOALS="${MARS_BUILD_GOALS:-recoveryimage bootimage}"
+fi
+
+# ---------------------------------------------------------------------------
+# UFFD GC -- second half of the fix (see the comment in device.mk).
+#
+# Setting PRODUCT_ENABLE_UFFD_GC in the product config is NOT enough in this
+# build/make fork: art_config.mk:14 does
+#     config_enable_uffd_gc := $(firstword $(OVERRIDE_ENABLE_UFFD_GC) $(PRODUCT_ENABLE_UFFD_GC) default)
+# and the PRODUCT_* value either is not promoted to a global at that point or is
+# stripped again, so the generated product/etc/build.prop still contained
+# `ro.dalvik.vm.enable_uffd_gc=default` and post_process_props aborted the build
+# at 98% with:
+#     Unable to determine UFFD GC flag for kernel version "5.4.302-qgki-..."
+# OVERRIDE_ENABLE_UFFD_GC is the escape hatch the source names explicitly
+# ("Can be passed from the commandline", art_config.mk:5) and it is never
+# reassigned by any makefile, so a command-line/environment value is guaranteed
+# to win.  Passed BOTH ways so it does not matter whether soong_ui sanitises the
+# environment.
+# ---------------------------------------------------------------------------
+UFFD_GC="${OVERRIDE_ENABLE_UFFD_GC:-false}"
+export OVERRIDE_ENABLE_UFFD_GC="$UFFD_GC"
+echo "   OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC"
+echo "   BOARD_USES_RECOVERY_AS_BOOT='$RASB' -> mka $GOALS OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC (log: $LOG)"
 set +e
-mka recoveryimage 2>&1 | tee "$LOG"
+mka $GOALS "OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC" 2>&1 | tee "$LOG"
 RC=${PIPESTATUS[0]}
 set -e
 if [ "$RC" != 0 ]; then
-	echo "ERROR: mka recoveryimage failed (exit $RC)." >&2
+	echo "ERROR: mka $GOALS failed (exit $RC)." >&2
 	echo "       Last 40 lines of $LOG:" >&2
 	tail -40 "$LOG" | sed 's/^/       /' >&2
 	exit "$RC"
@@ -360,13 +417,55 @@ phase_done build
 # ---------------------------------------------------------------------------
 echo
 echo "== 7. collect =="
-OUT="$FOX_DIR/out/target/product/mars"
+# Never hard-code the product directory.  Capture PRODUCT_OUT from the lunch
+# that was just done, and fall back through the names the build system may have
+# used.  (The lunch target is twrp_mars, but the output directory is named after
+# TARGET_DEVICE = mars.)
+OUT="$(get_build_var PRODUCT_OUT 2>/dev/null || true)"
+if [ -z "$OUT" ] || [ ! -d "$OUT" ]; then
+	DEV="$(get_build_var TARGET_DEVICE 2>/dev/null || true)"
+	[ -n "$DEV" ] || DEV=mars
+	OUT="$FOX_DIR/out/target/product/$DEV"
+fi
+[ -d "$OUT" ] || OUT="$FOX_DIR/out/target/product/mars"
+echo "   PRODUCT_OUT: $OUT"
 mkdir -p "$DIST"
-find "$OUT" -maxdepth 1 -type f \
-	\( -name 'boot.img' -o -name 'recovery.img' -o -name 'vendor_boot.img' \
-	   -o -name 'OrangeFox-*' -o -name 'dtbo.img' \) \
-	-exec cp -v {} "$DIST/" \;
-[ -n "$(ls -A "$DIST" 2>/dev/null)" ] || { echo "ERROR: no images in $OUT" >&2; exit 1; }
+# maxdepth 2 also picks up out/dist and out/target/product/<dev>/recovery/.
+# Each directory is tested first: `find` exits non-zero when a path does not
+# exist, and under `set -e` that silently kills the script right here -- which is
+# exactly how the first successful build lost its BUILD-INFO.txt.
+for d in "$OUT" "$FOX_DIR/out/dist"; do
+	[ -d "$d" ] || continue
+	find "$d" -maxdepth 2 -type f \
+		\( -name 'boot.img' -o -name 'recovery.img' -o -name 'vendor_boot.img' \
+		   -o -name 'OrangeFox-*.zip' -o -name 'dtbo.img' \) \
+		-exec cp -v {} "$DIST/" \;
+done
+
+# An *image* is required.  "the command exited 0" is not evidence that anything
+# was built -- see the goal discussion above section 6.
+HAVE_IMG=0
+for f in "$DIST/boot.img" "$DIST/recovery.img" "$DIST/vendor_boot.img"; do
+	[ -f "$f" ] && HAVE_IMG=1
+done
+if [ "$HAVE_IMG" != 1 ]; then
+	{
+		echo "ERROR: no boot/recovery/vendor_boot image was produced."
+		echo "       PRODUCT_OUT       : $OUT"
+		echo "       goals requested   : mka $GOALS"
+		echo "       BOARD_USES_RECOVERY_AS_BOOT: '$RASB'"
+		echo
+		echo "       files actually present in $OUT (depth <= 2):"
+		find "$OUT" -maxdepth 2 2>/dev/null | head -60 | sed 's/^/         /'
+		echo
+		echo "       every .img anywhere under $FOX_DIR/out:"
+		find "$FOX_DIR/out" -name '*.img' 2>/dev/null | head -40 | sed 's/^/         /'
+		echo
+		echo "       last 40 lines of $LOG:"
+		tail -40 "$LOG" 2>/dev/null | sed 's/^/         /'
+	} >&2
+	exit 1
+fi
 
 {
 	echo "mars / twrp_mars-$BUILD_TYPE / fox_14.1 -- built on $(hostname)"
@@ -379,14 +478,14 @@ find "$OUT" -maxdepth 1 -type f \
 		echo "kernel Image: $DEST/prebuilt/Image"
 		echo "kernel sha256: $(sha256sum "$DEST/prebuilt/Image" | cut -d' ' -f1)"
 		if command -v strings >/dev/null 2>&1; then
-			echo "kernel version: $(strings "$DEST/prebuilt/Image" | grep -m1 'Linux version' || true)"
+			echo "kernel version: $(strings "$DEST/prebuilt/Image" | grep -m1 '5\.4\.302' || true)"
 		fi
 	else
 		echo "kernel Image: MISSING"
 	fi
 	echo "kernel url (only used if a download happened): $KERNEL_URL"
-	echo "build type: $BUILD_TYPE"
 	echo "jobs: $JOBS"
+	echo "build type: $BUILD_TYPE"
 	echo
 	sha256sum "$DIST"/* | sed "s|$DIST/||"
 } > "$DIST/BUILD-INFO.txt"
@@ -396,8 +495,9 @@ echo "   artifacts in $DIST:"
 ls -lh "$DIST" | sed 's/^/   /'
 echo
 echo "   flash/boot it with (nothing is flashed by this script):"
-for f in "$DIST"/*.img; do
-	[ -e "$f" ] && echo "     fastboot boot $(basename "$f")"
-done
+# mars has no recovery partition, so boot.img IS the recovery.  Only ever
+# `fastboot boot` it first; flash only once the recovery actually comes up.
+[ -f "$DIST/boot.img" ] && echo "     fastboot boot boot.img      # try it, changes nothing"
+[ -f "$DIST/recovery.img" ] && echo "     (recovery.img is a side product -- do NOT flash it on mars)"
 echo
 printf '== done: total %dm%02ds ==\n' $(( (SECONDS - T0) / 60 )) $(( (SECONDS - T0) % 60 ))

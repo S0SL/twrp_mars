@@ -16,7 +16,7 @@ what it does, what it needs, how long it takes, and what to do when it breaks.
 | resource | minimum | recommended | why |
 | --- | --- | --- | --- |
 | OS | Ubuntu 22.04 x86_64 | Ubuntu 24.04 x86_64 | the tree is built for 22.04+; other distros work but the apt line below is Ubuntu |
-| CPU | 4 cores | 16 cores | a 5.4 kernel-independent Android 14 tree; `-j$(nproc)` capped at 12 |
+| CPU | 4 cores | 24 cores | a 5.4 kernel-independent Android 14 tree; `-j$(nproc)` capped at 16 |
 | RAM | 16 GB | 22 GB+ swap | Soong + ninja linking; 8 GB will OOM with `-j8` (use `--jobs 4`) |
 | disk | 150 GB free | **200 GB+ free** | measured: 118 GB used on the CI runner after `repo sync` + caches, with `out/` still to come |
 | network | ~40 GB download | — | `repo sync` of the pruned Android 14 manifest |
@@ -265,7 +265,7 @@ GitHub — it works entirely from the tree already on disk.
 | variable | default | meaning |
 | --- | --- | --- |
 | `MARS_HOME` | `/home/shen` | where the AOSP tree and the device tree live |
-| `MARS_JOBS` | `$(nproc)`, capped at 12 | `mka` parallelism (16 cores / 22 GB + swap on this box) |
+| `MARS_JOBS` | `$(nproc)`, capped at 16 | `mka` parallelism (24 cores / 22 GB + 17 GB swap on this box) |
 | `MARS_MEM_LOW_MB` | `2000` | pause fetches below this `MemAvailable` |
 | `MARS_MEM_HIGH_MB` | `4000` | resume them above this |
 | `FOX_BUILD_TYPE` | `Unofficial` | `FOX_BUILD_TYPE` |

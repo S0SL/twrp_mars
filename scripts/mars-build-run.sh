@@ -19,8 +19,8 @@
 #
 # Environment knobs (all optional):
 #   MARS_HOME        default /home/shen
-#   MARS_JOBS        build parallelism, default nproc capped at 12
-#                    (this box has 16 cores / 22 GB + swap)
+#   MARS_JOBS        build parallelism, default nproc capped at 16
+#                    (this box has 24 cores / 22 GB + 17 GB swap)
 #   MARS_MEM_LOW_MB  pause fetches below this MemAvailable, default 2000
 #   MARS_MEM_HIGH_MB resume fetches above this, default 4000
 #   FOX_BUILD_TYPE   default Unofficial
@@ -34,10 +34,11 @@ TREE="$HOME_DIR/twrp-mars"
 LOG_DIR="$HOME_DIR/logs"
 DIST="$TREE/dist"
 STAMP="$HOME_DIR/.mars-sync-complete"
-# Parallelism: derive from the host, capped at 12.  The box is 16 cores /
-# 22 GB (+swap); the old hard-coded 4 left 12 cores idle.
+# Parallelism: derive from the host, capped at 16.  The box is 24 cores /
+# 22 GB + 17 GB swap; the operator's sweet spot is 16 jobs (~1.5 GB each),
+# and the old hard-coded 4 left 20 cores idle.
 JOBS="${MARS_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-if [ "$JOBS" -gt 12 ]; then JOBS=12; fi
+if [ "$JOBS" -gt 16 ]; then JOBS=16; fi
 MEM_LOW="${MARS_MEM_LOW_MB:-2000}"
 MEM_HIGH="${MARS_MEM_HIGH_MB:-4000}"
 

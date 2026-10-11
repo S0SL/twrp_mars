@@ -37,10 +37,10 @@ a device. The old `~/fox_14.1/out` and `.ccache` are warm, so a rebuild is
 | --- | --- | --- |
 | ramdisk compression | `OF_USE_LZMA_COMPRESSION := 1` → LZMA-alone, kernel cannot unpack it | `BOARD_RAMDISK_USE_LZMA := false` → gzip (kernel has `CONFIG_RD_GZIP=y`, no LZMA) |
 | `scripts/check-tree.sh` | — | fails in ~10 s if any non-gzip ramdisk compression is re-enabled (negative-tested) |
-| `build-local.sh` `--jobs` | nproc | nproc **capped at 12**; `MARS_JOBS=N` / `--jobs N` override |
+| `build-local.sh` `--jobs` | nproc | nproc **capped at 16**; `MARS_JOBS=N` / `--jobs N` override |
 | kernel step | always downloaded, silently replacing `prebuilt/Image` with the default BakaSU release | **auto**: keep an existing `prebuilt/Image`, download only if missing; `--force-kernel` / `--kernel-url` to replace; section 5 prints the sha256 + `Linux version` of the Image actually used |
 | `BUILD-INFO.txt` | `kernel: <URL>` (misleading — it printed the URL even when nothing was downloaded) | `kernel sha256` + `kernel version` of the real `prebuilt/Image`, plus `jobs` |
-| `mars-build-run.sh` | `MARS_JOBS` default 4, "4 cores / 15 GB this box" | default nproc capped 12, mem thresholds 2000/4000 MB |
+| `mars-build-run.sh` | `MARS_JOBS` default 4, "4 cores / 15 GB this box" | default nproc capped 16, mem thresholds 2000/6000 MB |
 | CI workflow kernel step | `fetch-kernel.sh <url>` | `KERNEL_FORCE=1 fetch-kernel.sh <url>` (an explicit CI input must still win) |
 
 ## 2. Get the tooling onto the server without clobbering its local fixes
