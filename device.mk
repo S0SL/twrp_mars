@@ -19,6 +19,29 @@ PRODUCT_USE_DYNAMIC_PARTITIONS := true
 PRODUCT_SHIPPING_API_LEVEL := 30
 
 # ---------------------------------------------------------------------------
+# UFFD GC (dalvik runtime)
+#
+#   The prebuilt kernel used here is 5.4.302-qgki-g797c093f5b52.  AOSP only
+#   knows how to derive the UFFD-GC default for a handful of GKI version
+#   strings; for anything it cannot classify, `post_process_props` aborts the
+#   build while generating build.prop with:
+#
+#       Unable to determine UFFD GC flag for kernel version "5.4.302-qgki-..."
+#       You can fix this by explicitly setting PRODUCT_ENABLE_UFFD_GC to
+#       "true" or "false" based on the kernel version.
+#
+#   (build/make/core/Makefile:5440-5466, art_config.mk:12-21).  That failure
+#   lands at ~98% of the build, after ~15 minutes of compiling, and it is the
+#   only thing left between the tree and a boot image.
+#
+#   UFFD GC is a runtime *dalvik* GC optimisation; it has no meaning for a
+#   recovery ramdisk, so "false" is the right answer here.  A future kernel can
+#   override it without touching this file:
+#       mka OVERRIDE_ENABLE_UFFD_GC=true bootimage
+# ---------------------------------------------------------------------------
+PRODUCT_ENABLE_UFFD_GC := false
+
+# ---------------------------------------------------------------------------
 # Soong namespaces
 #   libdisplayconfig.qti / vendor.display.config@* are built from
 #   vendor/qcom/opensource/commonsys-intf/display.
@@ -102,6 +125,9 @@ endif
 # docs/KNOWN_ISSUES.md I7 and docs/RAMDISK-MODULES.md.
 # ---------------------------------------------------------------------------
 TW_LOAD_VENDOR_MODULES := "xiaomi_touch.ko fts_touch_spi.ko msm_drm.ko hwid.ko mmhardware_sysfs_dlkm.ko qti_battery_charger_main.ko adsp_loader_dlkm.ko apr_dlkm.ko q6_notifier_dlkm.ko q6_pdr_dlkm.ko snd_event_dlkm.ko"
+# v2: the device's own vendor_boot ramdisk also carries modules built for the
+# stock kernel; let TWRP scan /lib/modules as a second source before /vendor.
+TW_LOAD_VENDOR_BOOT_MODULES := true
 
 # ---------------------------------------------------------------------------
 # Touch panel firmware
@@ -121,30 +147,61 @@ PRODUCT_COPY_FILES += \
     $(DEVICE_PATH)/firmware/st_fts_k2_htp.ftb:$(TARGET_COPY_OUT_VENDOR)/firmware/st_fts_k2_htp.ftb
 
 # ---------------------------------------------------------------------------
-# Crypto / FBE -- PHASE 1: DISABLED
+# Crypto / FBE -- PHASE 2 (v4): ENABLED
 #
-# The goal of phase 1 is only: boot the UI, flash zips, back up/restore
-# partitions, MTP/ADB.  Decrypting /data is phase 2 and needs the qcom
-# keymaster / qseecomd / rpmb blobs checked into recovery/root/vendor/lib64/.
+# Same option set as OrangeFox/device/vayu (fox_14.1), which is the reference
+# for this recovery generation, and not the older TeamWin A11 recipe:
 #
-# Flip the block below on for phase 2 (see docs/PHASE2-CRYPTO.md):
+#   * in fox_14.1 TW_INCLUDE_CRYPTO := true is enough for the *whole* FBE +
+#     metadata-decrypt path, because bootable/recovery/Android.mk:348-375 then
+#     sets TW_INCLUDE_CRYPTO_FBE := true itself, adds -DTW_INCLUDE_FBE and
+#     -DTW_INCLUDE_FBE_METADATA_DECRYPT, and links the keystore2 stack
+#     (keystore2, libkeymint_support, libkm_compat*, gatekeeper AIDL, ...).
+#     The three switches are still written out explicitly so the intent is
+#     visible in the tree.
+#   * libkeymaster4 / libpuresoftkeymasterdevice (the old A11 list) are NOT
+#     needed here and are deliberately not added: fox_14.1's
+#     bootable/recovery/prebuilt/Android.mk already copies libkeymaster4support,
+#     libkeymaster4_1support, libpuresoftkeymasterdevice, libsoftkeymaster,
+#     android.hardware.keymaster@4.x.so, android.hardware.gatekeeper@1.0.so,
+#     libion and libxml2 into the recovery ramdisk when crypto is on.
+#   * TW_USE_FSCRYPT_POLICY := 2 -> USE_FSCRYPT_POLICY_V2, which is what mars'
+#     /data line asks for (fileencryption=...:v2+inlinecrypt_optimized+wrappedkey_v0).
+#     (Anything but "1" selects V2 - it is set explicitly to document that.)
 #
-#TW_INCLUDE_CRYPTO := true
-#TW_INCLUDE_CRYPTO_FBE := true
-#TW_INCLUDE_FBE_METADATA_DECRYPT := true
-#PRODUCT_PACKAGES += \
-#    qcom_decrypt \
-#    qcom_decrypt_fbe
-#TARGET_RECOVERY_DEVICE_MODULES += \
-#    libkeymaster4 \
-#    libpuresoftkeymasterdevice
-#RECOVERY_LIBRARY_SOURCE_FILES += \
-#    $(TARGET_OUT_SHARED_LIBRARIES)/libkeymaster4.so \
-#    $(TARGET_OUT_SHARED_LIBRARIES)/libpuresoftkeymasterdevice.so
+# PLATFORM_SECURITY_PATCH / PLATFORM_VERSION: the TEE's keymaster refuses to
+# unwrap keys for a client that claims to be *older* than the key (rollback
+# protection).  Recovery therefore claims a far-future SPL, exactly like
+# OrangeFox/device/vayu (2127-12-31) and the kotah sm8350 tree (2099-12-31).
+# This build system rejects a direct PLATFORM_SECURITY_PATCH assignment in
+# build/make/core/version_util.mk:53 *if it is set before that file is parsed*;
+# device.mk is parsed afterwards, which is why the override works here (same
+# place vayu puts it).
+#
+# The QCOM TEE stack itself cannot be built from source and is checked in as
+# vendor blobs under recovery/root/ -- see docs/V4-REPORT.md for the exact list
+# and their provenance (LineageOS 23.2 sm8350-common proprietary files).
 # ---------------------------------------------------------------------------
-TW_INCLUDE_CRYPTO := false
+TW_USE_FSCRYPT_POLICY := 2
 
-# Never touch an encrypted /data in phase 1.
+TW_INCLUDE_CRYPTO := true
+TW_INCLUDE_CRYPTO_FBE := true
+TW_INCLUDE_FBE_METADATA_DECRYPT := true
+
+PRODUCT_PACKAGES += \
+    qcom_decrypt \
+    qcom_decrypt_fbe
+
+# platform / security patch (see the note above)
+PLATFORM_VERSION := 99.87.36
+PLATFORM_VERSION_LAST_STABLE := $(PLATFORM_VERSION)
+
+PLATFORM_SECURITY_PATCH := 2099-12-31
+VENDOR_SECURITY_PATCH := $(PLATFORM_SECURITY_PATCH)
+
+# Safety net kept from phase 1: do not rewrite the fstab / boot image of an
+# already-encrypted device (OrangeFox twrp-functions.cpp:3283,3939,4063).
+# It does not affect /data decryption itself.
 OF_DONT_PATCH_ENCRYPTED_DEVICE := 1
 
 # ---------------------------------------------------------------------------

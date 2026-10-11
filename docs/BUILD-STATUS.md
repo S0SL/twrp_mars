@@ -915,3 +915,30 @@ really used, and keeps an existing `prebuilt/Image` by default
 (`--force-kernel`/`--kernel-url` to replace it); the CI step sets
 `KERNEL_FORCE=1` because there the input is an explicit choice.
 
+
+## v4 -- RESULT: built; FBE decryption ON + recovery USB repaired + notch/geometry calibrated
+
+```
+v3  boot.img  sha256 d4eb1c6f092f762d0832b6159be119527ba8514292b35afd7de20d528c135584  (192 MiB, boots, no /data)
+v4  boot.img  sha256 40d74db0ff5ee5efbfe5e84151738f012dec74c2cf2137c046df570de0853657  (201326592 bytes)
+```
+
+Built on the server with `MARS_JOBS=12 ./scripts/build-local.sh --skip-sync --fox-dir ~/fox_14.1`,
+i.e. `mka -j12 bootimage`.  `--jobs`/`MARS_JOBS` only became effective in v4: the script used to
+compute JOBS and then run a bare `mka`, and soong ignores MAKEFLAGS -- the ninja process really ran
+at `-j 26` (= nproc+2), which is what the `Warning: high -j26 count compared to 22.1GB of RAM` line in
+the logs is about.  Measured on this box: 16 jobs -> 15m40s, 12 jobs -> 10m32s.
+
+Three independent changes went in (details in [V4-REPORT.md](V4-REPORT.md)):
+
+1. **FBE decryption** (`device.mk`): `TW_USE_FSCRYPT_POLICY := 2`, `TW_INCLUDE_CRYPTO := true`
+   (+ the two implied switches), `qcom_decrypt`/`qcom_decrypt_fbe`, the platform-version /
+   security-patch overrides, and the QCOM TEE blobs from
+   `TheMuppets/proprietary_vendor_xiaomi_sm8350-common@lineage-23.2` staged under
+   `recovery/root/{system/bin,vendor/lib64}`.
+2. **USB/adb repair** (see KNOWN_ISSUES I17/I18): the boot image had been shipping an almost empty
+   cmdline, so `sys.usb.controller` was empty and no USB device ever enumerated.  The cmdline is now
+   passed through `BOARD_MKBOOTIMG_ARGS`, `init.recovery.qcom.rc` has a UDC fallback, and the missing
+   QTI `init.recovery.usb.rc` is shipped.
+3. **Screen geometry** (KNOWN_ISSUES I19): `OF_SCREEN_H 3200 -> 2400`, `OF_STATUS_H 90 -> 137`,
+   `OF_STATUS_INDENT_LEFT 48 -> 216` so the status-bar clock is no longer under the punch hole.

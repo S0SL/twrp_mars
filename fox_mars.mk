@@ -69,9 +69,35 @@ OF_ENABLE_FRP_ADDON := 1
 #   mars: 1440x3200 panel, rendered at 1440 wide with a ~165px status bar
 #   (TARGET_RECOVERY_UI_MARGIN_HEIGHT in BoardConfig.mk comes from LineageOS).
 # ---------------------------------------------------------------------------
-OF_SCREEN_H := 3200
-OF_STATUS_H := 90
-OF_STATUS_INDENT_LEFT := 48
+# v4 -- calibrated against mars' own display overlay
+# (android_device_xiaomi_mars/overlay/Frameworks/res/values/{config,dimens}.xml):
+#   config_mainBuiltInDisplayCutout = "M 0,0 H 208 V 137 H 0 V 0 Z @left"
+#   status_bar_height_portrait      = 137px
+# i.e. the punch hole is a 208x137 px box in the TOP-LEFT corner and the ROM
+# reserves a 137 px status bar for it.
+#
+#   OF_SCREEN_H       2400  theme coordinate space.  OrangeFox's theme is
+#                           1080-wide and scaled by gr_fb_width()/1080 on x and
+#                           (gr_fb_height()+TW_H_OFFSET)/OF_SCREEN_H on y
+#                           (gui/pages.cpp:940-990).  mars is a 20:9 device, so
+#                           OF_SCREEN_H must be 2400 (= 1080 * 20/9) to keep
+#                           those two factors equal; with 3200 the UI was
+#                           stretched ~37% horizontally vs vertically.  Every
+#                           sm8350 OrangeFox tree uses 2400 (kotah/venus:
+#                           OF_SCREEN_H=2400 with the same 1440x3200 panel class,
+#                           vayu: OF_SCREEN_H=2400).
+#   OF_STATUS_H       137   matches the ROM's own status_bar_height_portrait, so
+#                           the Fox status bar band covers exactly the cutout
+#                           band; the theme also derives its content inset from
+#                           it (vars.xml: cutout_w = status_h - 72).
+#   OF_STATUS_INDENT_LEFT 216  the cutout reaches x=208, so left-aligned status
+#                           text (which is where the clock sits by default --
+#                           theme default center_clock=2, i.e. LEFT) starts
+#                           clear of the hole instead of underneath it.
+#   OF_STATUS_INDENT_RIGHT 48  hole is on the left only.
+OF_SCREEN_H := 2400
+OF_STATUS_H := 137
+OF_STATUS_INDENT_LEFT := 216
 OF_STATUS_INDENT_RIGHT := 48
 OF_HIDE_NOTCH := 1
 OF_CLOCK_POS := 1

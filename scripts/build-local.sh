@@ -30,7 +30,7 @@
 #   ./scripts/build-local.sh [options]
 #
 #   --fox-dir DIR        build tree            (default $FOX_DIR or ~/fox_14.1)
-#   --jobs N             parallel jobs         (default: nproc, capped at 16;
+#   --jobs N             parallel jobs         (default: nproc, capped at 14;
 #                        MARS_JOBS overrides)
 #   --kernel-url URL     prebuilt kernel Image (implies --force-kernel)
 #   --force-kernel       download even though prebuilt/Image already exists
@@ -54,9 +54,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FOX_DIR="${FOX_DIR:-$HOME/fox_14.1}"
 # Parallelism: derive it from the host (MARS_JOBS / --jobs overrides).  The
-# build box is 24 cores / 22 GB + 17 GB swap: 16 jobs (~1.5 GB each) is the
-# sweet spot the operator picked -- 24 concurrent cc1plus/lld jobs thrash, and
-# the old hard-coded 4 left 20 cores idle.
+# build box is 24 cores / 22 GB + 17 GB swap.  Measured on it: 12 jobs ->
+# 10m32s for `mka bootimage`, 16 jobs -> 15m40s, because the memory pressure
+# pushes the build into swap.  MARS_JOBS=12 is what the operator uses.
+#
+# NOTE (v4): this value is only advisory unless it is *passed to make* -- a bare
+# `mka` runs ninja at nproc+2 (=26 here), which is what the
+# "Warning: high -j26 count compared to 22.1GB of RAM" line in the logs is
+# about.  The build step below therefore runs `mka -j"$JOBS"`.
 JOBS="${MARS_JOBS:-}"
 KERNEL_URL="${KERNEL_URL:-https://github.com/S0SL/android_kernel_xiaomi_sm8350/releases/download/boot-img-LOS23.2-20260930-bakasu/anykernel3-BakaSU-susfs-v2.3.0-mars.zip}"
 BUILD_TYPE="${FOX_BUILD_TYPE:-Unofficial}"
@@ -104,7 +109,7 @@ esac
 # JOBS: nproc unless MARS_JOBS/--jobs says otherwise, capped at 16.
 if [ -z "$JOBS" ]; then
 	JOBS="$(nproc 2>/dev/null || echo 4)"
-	if [ "$JOBS" -gt 16 ]; then JOBS=16; fi
+	if [ "$JOBS" -gt 14 ]; then JOBS=14; fi
 fi
 case "$JOBS" in
 	''|*[!0-9]*) echo "ERROR: --jobs must be a positive integer (got '$JOBS')" >&2; exit 2 ;;
@@ -123,7 +128,7 @@ echo " mars OrangeFox recovery -- local build"
 echo "   workspace : $ROOT"
 echo "   tree      : $FOX_DIR"
 echo "   device dir: $DEST"
-echo "   jobs      : $JOBS"
+echo "   jobs      : $JOBS (passed to mka as -j$JOBS)"
 echo "   build type: $BUILD_TYPE"
 echo "==================================================================="
 
@@ -144,7 +149,7 @@ if [ -n "${FREE_GB:-}" ]; then
 fi
 MEM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 echo "   RAM: ${MEM_GB} GB (linking needs headroom; 16 GB+ recommended)"
-echo "   jobs: $JOBS (nproc capped at 16; --jobs N or MARS_JOBS=N to override, --jobs 4 on a small box)"
+echo "   jobs: $JOBS (nproc capped at 14; --jobs N or MARS_JOBS=N to override, --jobs 4 on a small box)"
 
 # Dependency check.  The apt package set is the same one the CI installs (see
 # docs/BUILD-ON-SERVER.md); printing the exact command matters, because the
@@ -401,7 +406,7 @@ export OVERRIDE_ENABLE_UFFD_GC="$UFFD_GC"
 echo "   OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC"
 echo "   BOARD_USES_RECOVERY_AS_BOOT='$RASB' -> mka $GOALS OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC (log: $LOG)"
 set +e
-mka $GOALS "OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC" 2>&1 | tee "$LOG"
+mka -j"$JOBS" $GOALS "OVERRIDE_ENABLE_UFFD_GC=$UFFD_GC" 2>&1 | tee "$LOG"
 RC=${PIPESTATUS[0]}
 set -e
 if [ "$RC" != 0 ]; then

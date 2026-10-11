@@ -11,6 +11,16 @@
 #
 # The `on fs` block is what makes /dev/block/bootdevice/by-name/* resolve on
 # this platform (there is no static /dev/block/platform path before it).
+# The qcom_decrypt package (PRODUCT_PACKAGES += qcom_decrypt qcom_decrypt_fbe)
+# installs /init.recovery.qcom_decrypt.rc and is supposed to add this import
+# itself; device/qcom/twrp-common/Android.mk only tries TARGET_ROOT_OUT,
+# TARGET_RECOVERY_ROOT_OUT and a path relative to the recipe cwd, and on this
+# build system none of them works (the appended file is overwritten when the
+# ramdisk is assembled), so the import is kept here in the device tree.
+# Without it init never parses the file and NONE of the decryption services
+# (qseecomd, keymaster-4-1-qti, gatekeeper-1-0-qti) exists.
+import /init.recovery.qcom_decrypt.rc
+
 #
 
 on fs
@@ -23,6 +33,12 @@ on fs
 
 on init
     setprop sys.usb.configfs 1
+    # v4: UDC name, belt-and-braces.  It normally arrives via
+    # androidboot.usbcontroller (see the note in BoardConfig.mk), but the
+    # boot image cmdline has already been observed to lose it; without a
+    # UDC the configfs gadget is never bound and no USB device appears
+    # (no adb / no MTP / sideload hangs).
+    setprop sys.usb.controller a600000.dwc3
 
 on property:ro.boot.usbcontroller=*
     setprop sys.usb.controller ${ro.boot.usbcontroller}

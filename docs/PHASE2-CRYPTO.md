@@ -1,5 +1,34 @@
 # Phase 2 — decrypting `/data`
 
+> **v4: RESOLVED.** Phase 2 is implemented in v4 (`boot-v4.img`, `TW_DEVICE_VERSION
+> mars-2`).  What actually had to change is recorded in
+> [V4-REPORT.md](V4-REPORT.md); the short version:
+>
+> * `device.mk`: `TW_USE_FSCRYPT_POLICY := 2`, `TW_INCLUDE_CRYPTO := true`
+>   (fox_14.1 then turns on FBE + metadata decrypt + the keystore2 stack by
+>   itself, `bootable/recovery/Android.mk:348-375`), `PRODUCT_PACKAGES +=
+>   qcom_decrypt qcom_decrypt_fbe`, plus the `PLATFORM_VERSION` /
+>   `PLATFORM_SECURITY_PATCH` overrides in *device.mk* (version_util.mk:53 only
+>   rejects them before that file is parsed; envsetup.mk loads the product
+>   config first).
+> * **`TARGET_RECOVERY_DEVICE_MODULES += libkeymaster4 libpuresoftkeymasterdevice`
+>   from §2 below is NOT needed on fox_14.1** — that is the Android 11 recipe.
+>   `bootable/recovery/prebuilt/Android.mk:165-267` already copies
+>   `libkeymaster4support`, `libkeymaster4_1support`, `libpuresoftkeymasterdevice`,
+>   `libsoftkeymaster`, `android.hardware.keymaster@4.0/4.1.so`,
+>   `android.hardware.gatekeeper@1.0.so`, `libion` and `libxml2` into the recovery
+>   ramdisk once `TW_INCLUDE_CRYPTO` is on.
+> * The QCOM TEE blobs came from **TheMuppets/proprietary_vendor_xiaomi_sm8350-common
+>   `lineage-23.2`** (not from a device dump): qseecomd, keymaster@4.1-service-qti,
+>   gatekeeper@1.0-service-qti (+ its `hw/` impl) and 18 `vendor/lib64/*.so`.
+>   Their list matches LineageOS' own `proprietary-files.txt`, whose header says
+>   the blobs were extracted from `star OS2.0.7.0.UKAMIXM` — the same vendor the
+>   user's device runs, so the "blob/ROM mismatch" risk in §4 did not
+>   materialise.
+> * §4's other risks: `wrappedkey` on `/metadata` was already in the fstab; the
+>   AVB chaining question (F1/F2) is moot for this recovery because it mounts
+>   /vendor with the plain `avb` entry that the ROM family installed here uses.
+
 Phase 1 deliberately ships with `TW_INCLUDE_CRYPTO := false`.
 This file records exactly what has to change, and why.
 

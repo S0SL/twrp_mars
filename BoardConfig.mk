@@ -105,6 +105,37 @@ BOARD_KERNEL_CMDLINE += video=vfb:640x400,bpp=32,memsize=3072000
 BOARD_KERNEL_CMDLINE += androidboot.selinux=permissive
 
 # ---------------------------------------------------------------------------
+# V4: BOARD_KERNEL_CMDLINE does not survive to the image -- pass it again
+#
+# Verified on boot-v3.img: its header cmdline was exactly "twrpfastboot=1", and
+# searching the whole 192 MiB file for androidboot.usbcontroller,
+# androidboot.selinux / selinux=permissive, video=vfb or console=ttyMSM0 gave
+# zero hits.  So every line above was being dropped.
+#
+# Cause: this build system takes the RBC path for the board config
+# (build/make/core/board_config.mk:240-263) and that path strips the variables
+# listed in _board_strip_readonly_list -- BOARD_KERNEL_CMDLINE is one of them
+# (board_config.mk:27), while BOARD_MKBOOTIMG_ARGS is not (proof:
+# --header_version 3, set the same way above, does reach the image).
+#
+# What that cost us in recovery:
+#   * androidboot.usbcontroller=a600000.dwc3 was gone -> ro.boot.usbcontroller
+#     empty -> sys.usb.controller empty -> the configfs gadget could never be
+#     bound to the UDC (init.rc: "write /config/usb_gadget/g1/UDC
+#     ${sys.usb.controller}") -> no USB device ever enumerated on the host.
+#     That is the whole "adb 连不上 / ADB 开关没反应 / sideload 卡死" family:
+#     adb, MTP and sideload all wait for a gadget that never came up.
+#   * androidboot.selinux=permissive was gone -> recovery ran enforcing although
+#     the reference sm8350 TWRP trees ask for permissive.
+#   * video=vfb:... (the recovery framebuffer console) was gone as well.
+#
+# Keep this string identical to BOARD_KERNEL_CMDLINE + twrpfastboot=1: then it
+# does not matter whether mkbootimg takes the cmdline from here or from
+# INTERNAL_RECOVERYIMAGE_ARGS ("twrpfastboot=1").
+# ---------------------------------------------------------------------------
+BOARD_MKBOOTIMG_ARGS += --cmdline "$(BOARD_KERNEL_CMDLINE) twrpfastboot=1"
+
+# ---------------------------------------------------------------------------
 # Partitions -- sizes are the real mars GPT sizes
 #   source: LineageOS android_device_xiaomi_sm8350-common (lineage-23.2)
 #           + device/xiaomi/mars BoardConfig.mk (BOARD_DTBOIMG_PARTITION_SIZE)
@@ -203,7 +234,7 @@ BOARD_AVB_BOOT_ROLLBACK_INDEX_LOCATION := 1
 #           + OrangeFox/device/vayu (fox_14.1)
 # ---------------------------------------------------------------------------
 TW_THEME := portrait_hdpi
-TW_DEVICE_VERSION := mars-1
+TW_DEVICE_VERSION := mars-2
 TW_EXTRA_LANGUAGES := true
 TW_EXCLUDE_DEFAULT_USB_INIT := true
 TW_INCLUDE_NTFS_3G := true
