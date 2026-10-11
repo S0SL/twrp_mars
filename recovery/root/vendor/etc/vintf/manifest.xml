@@ -20,6 +20,38 @@
     its recovery/root/vendor/etc/vintf/manifest.xml.
 -->
 <manifest version="1.0" type="device">
+    <!--
+        hwservicemanager's own bootstrap interface.  keystore2 calls
+        IServiceManager::getService() before deciding whether it can use the HIDL
+        (km_compat) path; that lookup goes through libhidl's VINTF check, so
+        without this entry keystore2 logs "Skipping keymaster compat, this system
+        is AIDL only." and then panics with Cannot connect to Keymint.
+        On a stock device the entry comes from the framework manifest; our ramdisk
+        has no /system/etc/vintf/manifest.xml, and getTransport() falls back to
+        the device manifest, so it is declared here.
+    -->
+    <hal format="hidl">
+        <name>android.hidl.manager</name>
+        <transport>hwbinder</transport>
+        <version>1.2</version>
+        <interface>
+            <name>IServiceManager</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@1.2::IServiceManager/default</fqname>
+    </hal>
+    <!-- keymaster@4.1 inherits @4.0; hwservicemanager refuses to register a HAL
+         whose superclass is not declared as well. -->
+    <hal format="hidl">
+        <name>android.hardware.keymaster</name>
+        <transport>hwbinder</transport>
+        <version>4.0</version>
+        <interface>
+            <name>IKeymasterDevice</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@4.0::IKeymasterDevice/default</fqname>
+    </hal>
     <hal format="hidl">
         <name>android.hardware.keymaster</name>
         <transport>hwbinder</transport>
