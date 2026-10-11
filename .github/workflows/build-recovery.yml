@@ -210,7 +210,12 @@ jobs:
       - name: Fetch prebuilt kernel Image
         run: |
           set -euo pipefail
-          ./scripts/fetch-kernel.sh \
+          # KERNEL_FORCE=1: the workflow input is an explicit choice of kernel,
+          # so it must win over a prebuilt/Image restored from the cache.
+          # (scripts/fetch-kernel.sh otherwise keeps an existing Image -- on the
+          # build server that is what protects the stock LineageOS kernel from
+          # being replaced by the default BakaSU release.)
+          KERNEL_FORCE=1 ./scripts/fetch-kernel.sh \
             "${{ github.event.inputs.kernel_url || 'https://github.com/S0SL/android_kernel_xiaomi_sm8350/releases/download/boot-img-LOS23.2-20260930-bakasu/anykernel3-BakaSU-susfs-v2.3.0-mars.zip' }}" \
             prebuilt/Image
 

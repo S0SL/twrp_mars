@@ -19,9 +19,10 @@
 #
 # Environment knobs (all optional):
 #   MARS_HOME        default /home/shen
-#   MARS_JOBS        build parallelism, default 4 (this box has 4 cores / 15 GB)
-#   MARS_MEM_LOW_MB  pause fetches below this MemAvailable, default 1200
-#   MARS_MEM_HIGH_MB resume fetches above this, default 2800
+#   MARS_JOBS        build parallelism, default nproc capped at 12
+#                    (this box has 16 cores / 22 GB + swap)
+#   MARS_MEM_LOW_MB  pause fetches below this MemAvailable, default 2000
+#   MARS_MEM_HIGH_MB resume fetches above this, default 4000
 #   FOX_BUILD_TYPE   default Unofficial
 #   MARS_FORCE=1     rebuild even if dist/boot.img already exists
 
@@ -33,9 +34,12 @@ TREE="$HOME_DIR/twrp-mars"
 LOG_DIR="$HOME_DIR/logs"
 DIST="$TREE/dist"
 STAMP="$HOME_DIR/.mars-sync-complete"
-JOBS="${MARS_JOBS:-4}"
-MEM_LOW="${MARS_MEM_LOW_MB:-1200}"
-MEM_HIGH="${MARS_MEM_HIGH_MB:-2800}"
+# Parallelism: derive from the host, capped at 12.  The box is 16 cores /
+# 22 GB (+swap); the old hard-coded 4 left 12 cores idle.
+JOBS="${MARS_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+if [ "$JOBS" -gt 12 ]; then JOBS=12; fi
+MEM_LOW="${MARS_MEM_LOW_MB:-2000}"
+MEM_HIGH="${MARS_MEM_HIGH_MB:-4000}"
 
 # the two projects that repeatedly died: repo drops --depth=1 for any project
 # whose directory already exists, turning a ~1 GB fetch into 10-20 GB of history

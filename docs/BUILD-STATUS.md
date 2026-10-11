@@ -746,3 +746,137 @@ side (then `dmesg | grep -i -E "msm_drm|dsi|panel"` decides).
 
 Rollback is a non-event: `fastboot boot` touches no partition, and flashing back the stock
 `boot` image (or v1) restores the previous state.
+
+## v3 — RESULT: the v1/v2 black screen was the LZMA ramdisk (fixed, artifact built)
+
+### The root cause, in one line
+
+**The recovery ramdisk was compressed with LZMA-alone and mars' kernel was built
+with `# CONFIG_RD_LZMA is not set`, so the kernel could not unpack the initramfs
+at all: no `/init` was ever executed, hence no `adbd`, hence "black screen and
+no adb" — on both kernels.**
+
+### The evidence chain
+
+1. The user's own `fastboot boot` results isolate the variable. v1 and v2 share
+   *nothing but the ramdisk*:
+
+   | image | kernel | ramdisk | result |
+   | --- | --- | --- | --- |
+   | `boot-stock.img` (LineageOS 23.2 official) | `5.4.302-qgki-g7ede20c8692e` | gzip | boots normally |
+   | v1 | BakaSU `…-g797c093f5b52` | lzma | black screen, no adb |
+   | v2 | LOS stock `…-g7ede20c8692e` | lzma | black screen, no adb |
+
+2. Read off the running device by the user (`zcat /proc/config.gz | grep CONFIG_RD_`):
+
+   ```
+   CONFIG_RD_GZIP=y
+   # CONFIG_RD_BZIP2 is not set
+   # CONFIG_RD_LZMA is not set        <-- root cause
+   # CONFIG_RD_XZ is not set
+   # CONFIG_RD_LZO is not set
+   CONFIG_RD_LZ4=y
+   ```
+
+   Only the selected `lib/decompress_*` objects are linked, so an initramfs in
+   any other format makes `unpack_to_rootfs()` fail. The stock mars boot.img
+   agrees: its ramdisk is gzip (`1f 8b 08`).
+
+3. Where the LZMA came from — a single switch in this tree:
+
+   | step | file:line | effect |
+   | --- | --- | --- |
+   | `OF_USE_LZMA_COMPRESSION := 1` | `fox_mars.mk:87` (removed) | request LZMA |
+   | `BOARD_RAMDISK_USE_LZMA := true` | `bootable/recovery/orangefox.mk:371` | set by the switch |
+   | `COMPRESSION_COMMAND := $(LZMA) -f -c` | `build/make/core/Makefile:1210` | `lzma` alone (`5d 00 00 80`), not xz |
+
+   The ramdisk in both v1 and v2 started with `5d 00 00 80 00 ff ff ff`
+   (LZMA-alone properties + 8 MiB dict + unknown size) — measured locally:
+   `twrp-dist/boot-v2.img`, ramdisk offset 39436288, `RAMDISK_FMT [lzma]`.
+
+### The fix
+
+`fox_mars.mk` no longer sets `OF_USE_LZMA_COMPRESSION` and now pins
+`BOARD_RAMDISK_USE_LZMA := false`, so `core/Makefile`'s unset else-branch
+selects `$(GZIP)`. `scripts/check-tree.sh` fails in ~10 s if
+`OF_USE_LZMA_COMPRESSION` / `OF_USE_LZ4_COMPRESSION` /
+`BOARD_RAMDISK_USE_LZMA|LZ4|XZ` is set to `1`/`true` (negative-tested: the line
+put back makes the checker fail).
+
+### v3 artifact
+
+```
+/root/mi11/work/twrp-dist/boot-v3.img
+size   201326592 bytes (192 MiB, padded to BOARD_BOOTIMAGE_PARTITION_SIZE)
+sha256 d4eb1c6f092f762d0832b6159be119527ba8514292b35afd7de20d528c135584
+```
+
+Built with `--jobs 12` (the box is 16 cores / 22 GB), stock LOS kernel in place
+(`--skip-kernel`-equivalent: nothing was downloaded).
+
+magiskboot output — the decisive difference between v2 and v3, same tool, same
+command:
+
+```
+$ magiskboot unpack boot-v3.img
+HEADER_VER      [3]
+KERNEL_SZ       [39428608]
+RAMDISK_SZ      [30399820]
+OS_VERSION      [14.0.0]
+OS_PATCH_LEVEL  [2024-09]
+PAGESIZE        [4096]
+CMDLINE         [twrpfastboot=1]
+KERNEL_FMT      [raw]
+RAMDISK_FMT     [gzip]          <-- was [lzma] in v1/v2
+
+$ magiskboot unpack boot-v2.img
+... RAMDISK_SZ [18814764] ... RAMDISK_FMT [lzma]
+```
+
+Independent checks of the same image (`v3/boot-v3.prefix-124554240.bin`, the
+first 124 554 240 bytes — see the note below):
+
+```
+kernel sha256 : 2287c094ea0291fc21f231273af3cd3d3af80efffb1f2a5f5b06aa9e04f7e8bf  == stock Image
+ramdisk magic : 1f8b080000000000  -> gzip
+gunzip        : 78377728 bytes  (= the 78 377 728 B ramdisk-recovery.cpio, ratio 38.8%)
+cpio magic    : 070701, 4115 entries
+/init         : symlink -> /system/bin/init ; system/bin/init is ELF64 AArch64 (e_machine 183)
+```
+
+`out/target/product/mars/ramdisk-recovery.img` is 30 399 820 B — the same size as
+the ramdisk inside the image, i.e. the compression change came from the build
+itself (`COMPRESSION_COMMAND`), not from a post-hoc repack.
+
+| field | stock LOS 23.2 | v3 | note |
+| --- | --- | --- | --- |
+| header version | 3 | 3 | same |
+| page size | 4096 | 4096 | same |
+| kernel | `2287c094…` | `2287c094…` | identical (stock LOS kernel) |
+| ramdisk format | gzip | **gzip** | v2 was lzma — the bug |
+| ramdisk size | 1 489 270 | 30 399 820 | stock's is a first-stage-only ramdisk |
+| cmdline | *(empty)* | `twrpfastboot=1` | TWRP's own flag (`vendor/twrp/config/BoardConfigTWRP.mk:9`), read by `kernel_module_loader.cpp` |
+| os_version | Android 16 (2026-09) | Android 14 (2024-09) | informational; the recovery is built from fox_14.1 |
+| dtb | none | none | header v3 has no dtb field |
+
+Nothing is flashed by any of this — `fastboot boot boot-v3.img` only.
+
+### Note on the artifact transfer
+
+The 192 MiB pull from the build server was interrupted by the server being shut
+down for the CPU/RAM upgrade (it stopped after 124 554 240 bytes; a local
+zero-extension does NOT reproduce the image — the AVB/vbmeta payload sits after
+the ramdisk, so the file must be re-fetched, not padded). The sha256 above is the
+one the build host computed over the complete file and wrote into
+`dist/BUILD-INFO.txt`; the container copy is pending the re-fetch.
+
+### Kernel provenance warning
+
+`dist/BUILD-INFO.txt` used to print `$KERNEL_URL`, which is just the URL that
+*would* be downloaded. v2's log therefore read "kernel: …/anykernel3-BakaSU…"
+while the stock Image was actually in place. `build-local.sh` now prints, and
+records, the sha256 plus the `Linux version` string of the `prebuilt/Image` it
+really used, and keeps an existing `prebuilt/Image` by default
+(`--force-kernel`/`--kernel-url` to replace it); the CI step sets
+`KERNEL_FORCE=1` because there the input is an explicit choice.
+
