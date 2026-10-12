@@ -1,0 +1,24 @@
+v4.6 P2: pass a random challenge at the verify() call sites that are actually
+executed (Decrypt_User_Synth_Pass(), "using secdis to decrypt spblob" branch):
+
+  HIDL (used on mars, the vendor has no AIDL gatekeeper):
+      gk_device->verify(fakeUid(user_id), gk_challenge, pwd_handle_hidl, ...)
+  AIDL (patched for symmetry):
+      aidl_gk_device->verify(fakeUid(user_id), gk_challenge_aidl, ...)
+
+The v4.5 patch had been applied to Decrypt_User()'s legacy branch, which this
+device never reaches (recovery.log shows "Using synthetic password method" ->
+"using secdis to decrypt spblob"), so it had no effect.  Note that the decisive
+fix for the -45 is P1 (the missing SPU firmware path), not the challenge value.
+v4.6 P2: pass a random challenge at the verify() call sites that are actually
+executed (Decrypt_User_Synth_Pass(), "using secdis to decrypt spblob" branch):
+
+  HIDL (used on mars, the vendor has no AIDL gatekeeper):
+      gk_device->verify(fakeUid(user_id), gk_challenge, pwd_handle_hidl, ...)
+  AIDL (patched for symmetry):
+      aidl_gk_device->verify(fakeUid(user_id), gk_challenge_aidl, ...)
+
+The v4.5 patch had been applied to Decrypt_User()'s legacy branch, which this
+device never reaches (recovery.log shows "Using synthetic password method" ->
+"using secdis to decrypt spblob"), so it had no effect.  Note that the decisive
+fix for the -45 is P1 (the missing SPU firmware path), not the challenge value.

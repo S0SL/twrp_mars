@@ -31,6 +31,18 @@ on fs
     mkdir /firmware
     mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /firmware ro context=u:object_r:firmware_file:s0
 
+    # v4.6 P1: also expose the firmware images where ueventd/the kernel ask for
+    # them.  v4.5 logcat:
+    #   ueventd : firmware: attempted /vendor/firmware_mnt/image/ipa_fws.mdt,
+    #             open failed: No such file or directory
+    #   KeymasterUtils: SPU is not available / IsSbKmAvailable failed
+    #   GatekeeperHalDevice: verify_legacy -> ret: -45
+    #   keystore2: enforcements.rs:616: No suitable auth token found.
+    # /vendor/lib64 from the ramdisk already exists, so the directory can be
+    # created and the same vfat image mounted there as well.
+    mkdir /vendor/firmware_mnt 0755 root root
+    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /vendor/firmware_mnt ro context=u:object_r:firmware_file:s0
+
 on init
     setprop sys.usb.configfs 1
     # v4: UDC name, belt-and-braces.  It normally arrives via
@@ -75,3 +87,17 @@ on early-init
 # ramdisk but nothing started it (vayu does "start health-hal-2-1" on boot).
 on boot
     start health-hal-2-1
+
+# v4.6 P3: the battery/charger driver module.  TWRP's TW_LOAD_VENDOR_MODULES path
+# fails in recovery ("Unable to open module directory: /vendor/lib/modules.
+# Skipping"), so nothing exports /sys/class/power_supply/* and TWRP (which reads
+# the battery through the health HAL) logs "No health implementation is found;
+# assuming defaults" style fallbacks and shows a wrong percentage.  Load it
+# ourselves, after /vendor is mounted.
+service mars_batt_mod /system/bin/sh /sbin/mars-batt-mod.sh
+    oneshot
+    disabled
+    seclabel u:r:recovery:s0
+
+on boot
+    start mars_batt_mod
