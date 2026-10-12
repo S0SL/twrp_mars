@@ -23,25 +23,25 @@ import /init.recovery.qcom_decrypt.rc
 
 #
 
+# v4.7 A: the modem/firmware partition is mounted by /sbin/mars-fw-mount.sh
+# (started from `on fs` below).  The old single rc line never worked on this A/B
+# device: .../by-name/modem${ro.boot.slot_suffix} becomes .../by-name/modem,
+# which does not exist because the node is modem_a/_b while ro.boot.slot_suffix
+# is empty when the kernel is booted with "fastboot boot".  The script probes the
+# slot, lists the nodes that really exist, mounts vfat/ext4 at both /firmware and
+# /vendor/firmware_mnt and logs everything to /tmp/mars-fw-mount.log.
+service mars_fw_mount /system/bin/sh /sbin/mars-fw-mount.sh
+    oneshot
+    seclabel u:r:recovery:s0
+    user root
+    group root
+
 on fs
     wait /dev/block/platform/soc/${ro.boot.bootdevice}
     symlink /dev/block/platform/soc/${ro.boot.bootdevice} /dev/block/bootdevice
+    start mars_fw_mount
 
     # Load ADSP firmware for PMIC (needed on lahaina)
-    mkdir /firmware
-    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /firmware ro context=u:object_r:firmware_file:s0
-
-    # v4.6 P1: also expose the firmware images where ueventd/the kernel ask for
-    # them.  v4.5 logcat:
-    #   ueventd : firmware: attempted /vendor/firmware_mnt/image/ipa_fws.mdt,
-    #             open failed: No such file or directory
-    #   KeymasterUtils: SPU is not available / IsSbKmAvailable failed
-    #   GatekeeperHalDevice: verify_legacy -> ret: -45
-    #   keystore2: enforcements.rs:616: No suitable auth token found.
-    # /vendor/lib64 from the ramdisk already exists, so the directory can be
-    # created and the same vfat image mounted there as well.
-    mkdir /vendor/firmware_mnt 0755 root root
-    mount vfat /dev/block/bootdevice/by-name/modem${ro.boot.slot_suffix} /vendor/firmware_mnt ro context=u:object_r:firmware_file:s0
 
 on init
     setprop sys.usb.configfs 1
@@ -88,16 +88,10 @@ on early-init
 on boot
     start health-hal-2-1
 
-# v4.6 P3: the battery/charger driver module.  TWRP's TW_LOAD_VENDOR_MODULES path
-# fails in recovery ("Unable to open module directory: /vendor/lib/modules.
-# Skipping"), so nothing exports /sys/class/power_supply/* and TWRP (which reads
-# the battery through the health HAL) logs "No health implementation is found;
-# assuming defaults" style fallbacks and shows a wrong percentage.  Load it
-# ourselves, after /vendor is mounted.
-service mars_batt_mod /system/bin/sh /sbin/mars-batt-mod.sh
-    oneshot
-    disabled
-    seclabel u:r:recovery:s0
-
-on boot
-    start mars_batt_mod
+# v4.7 B3: default theme = Black.  TWRP loads /twres/themes/style.xml as the
+# active style (gui/theme/portrait_hdpi/ui.xml:13) and OrangeFox's theme picker
+# simply copies /twres/themes/styles/<Theme>.xml over it
+# (gui/theme/portrait_hdpi/pages/customization.xml:1957).  Nothing persists here
+# (/data/recovery/Fox is not available in this recovery), so do it on every boot.
+on init
+    copy /twres/themes/styles/Black.xml /twres/themes/style.xml

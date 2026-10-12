@@ -161,3 +161,15 @@ endif
 # into data.cpp), and it is set in BoardConfig.mk.
 # `OF_NO_HAPTICS` does not exist upstream -- deliberately not used here.
 # ---------------------------------------------------------------------------
+
+# v4.7 B: platform backlight maximum, same value as OrangeFox/device_vayu
+TW_MAX_BRIGHTNESS := 4095
+
+# v4.7 B: dim-but-usable minimum (0 switches the panel off: gui/blanktimer.cpp:71)
+TW_DEFAULT_BRIGHTNESS := 40
+
+# v4.7 B: default UI language (data.cpp:1462); zh_CN.xml is shipped in the ramdisk
+TW_DEFAULT_LANGUAGE := zh_CN
+
+# v4.7 B: install gui/theme/extra-languages (libguitwrp_defaults.go:241)
+TW_EXTRA_LANGUAGES := true

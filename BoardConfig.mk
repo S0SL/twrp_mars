@@ -253,7 +253,7 @@ TW_INPUT_BLACKLIST := "hbtp_vm"
 # Display / backlight
 TW_BRIGHTNESS_PATH := "/sys/class/backlight/panel0-backlight/brightness"
 TW_MAX_BRIGHTNESS := 4095
-TW_DEFAULT_BRIGHTNESS := 1640
+TW_DEFAULT_BRIGHTNESS := 40   # v4.7: dim default (0 = panel off, gui/blanktimer.cpp:71)
 TW_Y_OFFSET := 80
 TW_H_OFFSET := -80
 TW_FRAMERATE := 120
