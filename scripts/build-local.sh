@@ -133,6 +133,19 @@ echo "   build type: $BUILD_TYPE"
 echo "==================================================================="
 
 # ---------------------------------------------------------------------------
+# 0. shell syntax lint
+#   Recovery runs Android mksh.  Bash-only constructs such as a dotted property
+#   expansion killed the v4.7 firmware script ("bad substitution",
+#   /sbin/mars-fw-mount.sh[81]), so every script this tree ships is checked
+#   before anything is built.
+# ---------------------------------------------------------------------------
+if [ -x ./scripts/check-shell.sh ]; then
+	echo
+	echo "== 0. shell syntax lint =="
+	./scripts/check-shell.sh || { echo "shell lint failed - refusing to build"; exit 1; }
+fi
+
+# ---------------------------------------------------------------------------
 # 1. preflight
 # ---------------------------------------------------------------------------
 echo
