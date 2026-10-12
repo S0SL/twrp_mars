@@ -30,6 +30,15 @@
         has no /system/etc/vintf/manifest.xml, and getTransport() falls back to
         the device manifest, so it is declared here.
     -->
+    <!-- AIDL: the interface TWRP's decryption waits for (servicemanager checks
+         the device manifest too). -->
+    <hal format="aidl">
+        <name>android.system.keystore2</name>
+        <interface>
+            <name>IKeystoreService</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
     <hal format="hidl">
         <name>android.hidl.manager</name>
         <transport>hwbinder</transport>
@@ -71,6 +80,17 @@
             <instance>default</instance>
         </interface>
         <fqname>@1.0::IGatekeeper/default</fqname>
+    </hal>
+    <!-- health@2.1 inherits @2.0; hwservicemanager requires the superclass too. -->
+    <hal format="hidl">
+        <name>android.hardware.health</name>
+        <transport>hwbinder</transport>
+        <version>2.0</version>
+        <interface>
+            <name>IHealth</name>
+            <instance>default</instance>
+        </interface>
+        <fqname>@2.0::IHealth/default</fqname>
     </hal>
     <hal format="hidl">
         <name>android.hardware.health</name>

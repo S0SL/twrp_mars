@@ -1,0 +1,18 @@
+v4.5 patch for system/vold/Decrypt.cpp (TWRP's FBE decryption, built into recovery)
+
+A1) IGatekeeper::verify() was called with a zero challenge.  The QTI gatekeeper HAL
+    takes its legacy path in that case and the Android 14/16 TEE app rejects it:
+        GatekeeperHalDevice: verify_legacy
+        GatekeeperHalDevice: ret: -45
+    -> no auth token -> keystore2 enforcements.rs:616 "No suitable auth token found"
+    -> /data cannot be decrypted.  Fixed by passing a random 64-bit challenge
+    (like the framework's GateKeeper.verifyChallenge does).
+
+A2) The synthetic-password slots were looked up under the Android 8 path
+    /data/system_de/<user>/spblob/ .  With metadata-encrypted /data this device
+    keeps them in /metadata/password_slots/ (vold keydirectory is
+    /metadata/vold/metadata_encryption), so TWRP fell back to the legacy
+    gatekeeper-password-handle path.  Fixed by preferring
+    /metadata/password_slots/ when the legacy directory does not exist.
+
+Applied automatically by scripts/apply-v4.5-patches.sh (see docs/V4-REPORT.md).

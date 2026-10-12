@@ -63,3 +63,15 @@ on property:dev.mnt.blk.firmware=*
 
 on property:init.svc.fastbootd=running
     umount /firmware
+
+# v4.5: TWRP writes an unparsable /system/etc/vintf/manifest/boot-service.qti.xml
+# (manifest.version 9.0, "Illformed file ... (libvintf@8.0)") at startup, which makes
+# the whole framework VINTF manifest NULL.  Remove it as early as we can (TWRP only
+# does this itself when FOX_VIRTUAL_AB_DEVICE is defined).
+on early-init
+    rm /system/etc/vintf/manifest/boot-service.qti.xml
+
+# v4.5: TWRP reads the battery through the health HAL; the service exists in the
+# ramdisk but nothing started it (vayu does "start health-hal-2-1" on boot).
+on boot
+    start health-hal-2-1
