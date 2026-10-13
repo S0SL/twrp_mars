@@ -145,6 +145,12 @@ if [ -x ./scripts/check-shell.sh ]; then
 	./scripts/check-shell.sh || { echo "shell lint failed - refusing to build"; exit 1; }
 fi
 
+if [ -x ./scripts/apply-patches.sh ]; then
+	echo
+	echo "== 0b. build-tree patches =="
+	./scripts/apply-patches.sh "$FOX_DIR" || { echo "applying patches failed - refusing to build"; exit 1; }
+fi
+
 # ---------------------------------------------------------------------------
 # 1. preflight
 # ---------------------------------------------------------------------------
